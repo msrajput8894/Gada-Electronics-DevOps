@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gada Electronics</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>Gada Electronics</h1>
+    <form id="search" class="search">
+      <input id="q" type="search" placeholder="Search products" aria-label="Search products">
+      <select id="category" aria-label="Category">
+        <option value="">All categories</option>
+      </select>
+    </form>
+    <nav class="nav">
+      <span id="who"></span>
+      <button id="auth-btn" type="button">Log in</button>
+      <button id="orders-btn" type="button" hidden>Orders</button>
+      <button id="admin-btn" type="button" hidden>Admin</button>
+      <button id="cart-btn" type="button">Cart (<span id="cart-count">0</span>)</button>
+    </nav>
+  </header>
+
+  <main>
+    <p id="msg" role="status" class="msg"></p>
+    <section id="products" class="grid" aria-label="Products"></section>
+    <div id="pager" class="pager"></div>
+  </main>
+
+  <aside id="panel" class="panel" hidden>
+    <div class="panel-head">
+      <h2 id="panel-title"></h2>
+      <button id="panel-close" type="button" aria-label="Close">Close</button>
+    </div>
+    <div id="panel-body"></div>
+  </aside>
+
+  <dialog id="auth-dialog">
+    <form id="auth-form" method="dialog">
+      <h2 id="auth-title">Log in</h2>
+      <label id="name-row" hidden>Name <input id="auth-name" autocomplete="name"></label>
+      <label>Email <input id="auth-email" type="email" required autocomplete="email"></label>
+      <label>Password <input id="auth-password" type="password" required minlength="8" autocomplete="current-password"></label>
+      <p id="auth-error" class="error" role="alert"></p>
+      <div class="row">
+        <button type="submit" id="auth-submit">Log in</button>
+        <button type="button" id="auth-switch" class="link">Create an account</button>
+        <button type="button" id="auth-cancel" class="link">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>

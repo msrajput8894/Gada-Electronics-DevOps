@@ -1,0 +1,11 @@
+node_modules/
+.env
+*.log
+coverage/
+.DS_Store
+
+# Terraform (added later in the roadmap)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
