@@ -70,7 +70,6 @@ get_public_ip() {
 # HELPER: CONFIGURE SECURITY GROUP
 # ==========================================
 
-
 configure_security_group() {
 
     SG="$1"
@@ -115,28 +114,23 @@ configure_security_group() {
     echo "Checking for stale inbound rules..."
 
     OLD_RULES=$(aws ec2 describe-security-group-rules \
-        --filters "Name=group-id,Values=$SG" \
-        --query "SecurityGroupRules[?IsEgress==\`false\` && IpProtocol=='tcp' && (FromPort==\`22\` || FromPort==\`3000\`) && CidrIpv4!=\`'$MYIP/32'\`].SecurityGroupRuleId" \
-        --output text)
+    --filters "Name=group-id,Values=$SG" \
+    --query "SecurityGroupRules[?IsEgress==\`false\` && IpProtocol=='tcp' && (FromPort==\`22\` || FromPort==\`3000\`) && CidrIpv4!=\`null\` && CidrIpv4!=\`\"$MYIP/32\"\`].SecurityGroupRuleId" \
+    --output text)
 
     if [ -n "$OLD_RULES" ] && [ "$OLD_RULES" != "None" ]; then
-
         echo "Removing stale rules: $OLD_RULES"
 
         aws ec2 revoke-security-group-ingress \
             --group-id "$SG" \
             --security-group-rule-ids $OLD_RULES
-
     else
-
         echo "No stale rules found."
-
     fi
-
+    
     echo "Security Group configuration completed."
 
 }
-
 
 
 
