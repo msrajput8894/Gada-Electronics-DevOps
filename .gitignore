@@ -9,3 +9,11 @@ coverage/
 *.tfstate
 *.tfstate.*
 *.tfvars
+
+
+# AWS credentials
+*.pem
+*.key
+
+# AWS state files
+.aws-state/
