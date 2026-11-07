@@ -92,3 +92,19 @@ These are the points an interviewer or a production incident will eventually ask
 - **Helmet and plain HTTP** (`src/app.js`): the default security headers include `upgrade-insecure-requests`, which makes browsers request CSS and JavaScript over https. On a server that only speaks HTTP (an EC2 instance before TLS is set up) the page loads unstyled and broken. The app removes that directive; once nginx or a load balancer terminates TLS, you can put it back.
 - **Trusting the proxy** (`app.set('trust proxy', 1)`): behind nginx or a load balancer, the real client IP arrives in a header. This setting is what lets the app read it. Set it wrongly and every request appears to come from the proxy.
 - **Query input** (`src/validate.js`): `?q[$ne]=x` arrives as an object, not a string. The app only accepts plain strings so request input never becomes a MongoDB operator.
+
+## Run with Docker
+
+Needs Docker Desktop, or Docker Engine with the Compose plugin. Only nginx is published (port 8080); the app and MongoDB are reachable only inside the Compose network.
+
+    echo "JWT_SECRET=$(openssl rand -hex 32)" > .env
+    docker compose up -d --build
+    read -rsp "Admin password: " ADMIN_PASSWORD; echo
+    docker compose run --rm -e ADMIN_PASSWORD="$ADMIN_PASSWORD" app node src/seed.js
+    unset ADMIN_PASSWORD
+
+Then open http://localhost:8080 and log in as admin@gada.local.
+
+Useful commands: `docker compose ps`, `docker compose logs -f app`, `docker compose down` (keeps data) and `docker compose down -v` (DELETES the database volume).
+
+MongoDB is pinned to 7.0 on purpose. Some MongoDB 8.0.x releases refuse to start on Linux kernel 6.19 and newer (seen on Ubuntu's 7.0 kernel with 8.0.34), and containers share the host's kernel.
