@@ -1,0 +1,13 @@
+node_modules
+.git
+.env
+*.log
+coverage
+tests
+ops
+scripts
+.aws-state
+*.pem
+*.key
+Dockerfile
+docker-compose*.yml
