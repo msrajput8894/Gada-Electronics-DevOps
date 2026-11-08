@@ -16,4 +16,4 @@ coverage/
 *.key
 
 # AWS state files
-.aws-state/
+.aws-state/backend.hcl
