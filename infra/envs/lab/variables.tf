@@ -19,3 +19,21 @@ variable "admin_cidr" {
     error_message = "admin_cidr must be a valid CIDR range and must not be 0.0.0.0/0."
   }
 }
+
+variable "key_name" {
+  description = "Name of an existing EC2 key pair used for SSH"
+  type        = string
+  default     = "gada-key"
+}
+
+variable "app_instance_type" {
+  description = "Instance size for the app server"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "data_instance_type" {
+  description = "Instance size for the data server"
+  type        = string
+  default     = "t3.micro"
+}
