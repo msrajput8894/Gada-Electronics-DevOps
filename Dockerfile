@@ -19,6 +19,8 @@ COPY src ./src
 COPY public ./public
 
 # Never run as root inside the container. The node image ships with a "node" user.
+# The app never runs npm; removing it also removes its bundled dependencies.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 USER node
 EXPOSE 3000
 
