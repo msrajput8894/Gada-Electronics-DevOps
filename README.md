@@ -1,3 +1,5 @@
+[![CI](https://github.com/msrajput8894/Gada-Electronics-DevOps/actions/workflows/ci.yml/badge.svg)](https://github.com/msrajput8894/Gada-Electronics-DevOps/actions/workflows/ci.yml)
+
 # Gada Electronics
 
 A small electronics store (Node.js, Express, MongoDB) built as the practice project for a DevOps learning roadmap. The app is deliberately simple. The learning is in everything around it: Linux, Docker, CI/CD, Terraform, Ansible, Kubernetes and monitoring.
