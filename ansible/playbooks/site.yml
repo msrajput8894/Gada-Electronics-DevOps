@@ -10,3 +10,9 @@
   become: true
   roles:
     - data
+
+- name: Application server
+  hosts: app
+  become: true
+  roles:
+    - app
