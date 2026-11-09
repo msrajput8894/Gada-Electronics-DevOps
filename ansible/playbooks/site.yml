@@ -4,3 +4,9 @@
   roles:
     - base
     - docker
+
+- name: Database server
+  hosts: data
+  become: true
+  roles:
+    - data

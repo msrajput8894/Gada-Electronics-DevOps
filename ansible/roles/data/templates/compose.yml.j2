@@ -1,0 +1,21 @@
+services:
+  mongo:
+    image: mongo:7.0
+    command: ["--wiredTigerCacheSizeGB", "0.25"]
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "{{ mongo_root_user }}"
+      MONGO_INITDB_ROOT_PASSWORD: "{{ mongo_root_password }}"
+    ports:
+      - "{{ ansible_default_ipv4.address }}:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'db.adminCommand(\"ping\").ok' | mongosh --quiet | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+volumes:
+  mongo-data:
