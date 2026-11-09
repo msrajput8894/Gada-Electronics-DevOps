@@ -1,0 +1,2 @@
+mongo_root_user: gada_root
+mongo_root_password: "{{ vault_mongo_root_password }}"

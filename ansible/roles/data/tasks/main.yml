@@ -1,0 +1,26 @@
+- name: Create the data stack directory
+  ansible.builtin.file:
+    path: /opt/gada-data
+    state: directory
+    mode: "0750"
+
+- name: Write the compose file (contains the DB password)
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: /opt/gada-data/compose.yml
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Allow MongoDB from the app server's private address only
+  community.general.ufw:
+    rule: allow
+    port: "27017"
+    proto: tcp
+    from_ip: "{{ hostvars['gada-app'].ansible_default_ipv4.address }}"
+
+- name: Start MongoDB
+  community.docker.docker_compose_v2:
+    project_src: /opt/gada-data
+    state: present

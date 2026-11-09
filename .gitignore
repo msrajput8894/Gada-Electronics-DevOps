@@ -19,4 +19,4 @@ coverage/
 .aws-state/backend.hcl
 
 # Ansible: generated, IPs change every apply
-ansible/inventory/
+ansible/inventory/hosts.ini
