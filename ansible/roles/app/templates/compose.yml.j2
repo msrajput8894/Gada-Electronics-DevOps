@@ -1,0 +1,16 @@
+services:
+  app:
+    image: {{ app_image }}:{{ app_version }}
+    restart: unless-stopped
+    env_file: app.env
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
