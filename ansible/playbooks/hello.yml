@@ -1,0 +1,16 @@
+- name: First playbook
+  hosts: all
+  become: true
+  tasks:
+    - name: Make sure curl and htop are installed
+      ansible.builtin.apt:
+        name: [curl, htop]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Drop a marker file
+      ansible.builtin.copy:
+        content: "managed by ansible\n"
+        dest: /etc/gada-managed
+        mode: "0644"
