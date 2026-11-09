@@ -17,3 +17,6 @@ coverage/
 
 # AWS state files
 .aws-state/backend.hcl
+
+# Ansible: generated, IPs change every apply
+ansible/inventory/
