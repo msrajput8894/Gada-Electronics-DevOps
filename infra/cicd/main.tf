@@ -53,7 +53,7 @@ data "aws_iam_policy_document" "deploy" {
 
     condition {
       test     = "StringEquals"
-      variable = "ec2:ResourceTag/Environment"
+      variable = "ssm:resourceTag/Environment"
       values   = [each.key]
     }
   }
