@@ -10,5 +10,8 @@ keyed_groups:
   - key: tags.Role
     prefix: ""
     separator: ""
+  - key: tags.Environment
+    prefix: ""
+    separator: ""
 compose:
   ansible_host: public_ip_address

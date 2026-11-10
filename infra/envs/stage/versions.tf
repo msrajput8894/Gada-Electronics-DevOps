@@ -10,7 +10,7 @@ terraform {
 
   # The bucket name is supplied at init time: terraform init -backend-config=backend.hcl
   backend "s3" {
-    key          = "lab/terraform.tfstate"
+    key          = "stage/terraform.tfstate"
     region       = "ap-south-1"
     encrypt      = true
     use_lockfile = true
@@ -22,7 +22,7 @@ provider "aws" {
   default_tags {
     tags = {
       Project     = "gada-electronics"
-      Environment = "lab"
+      Environment = "stage"
       ManagedBy   = "terraform"
     }
   }
