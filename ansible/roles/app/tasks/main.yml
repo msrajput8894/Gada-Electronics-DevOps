@@ -40,3 +40,5 @@
   community.docker.docker_compose_v2:
     project_src: /opt/gada-app
     state: present
+    wait: true
+    wait_timeout: 120
