@@ -18,7 +18,7 @@
     rule: allow
     port: "27017"
     proto: tcp
-    from_ip: "{{ hostvars['gada-app'].ansible_default_ipv4.address }}"
+    from_ip: "{{ app_private_ip }}"
 
 - name: Start MongoDB
   community.docker.docker_compose_v2:

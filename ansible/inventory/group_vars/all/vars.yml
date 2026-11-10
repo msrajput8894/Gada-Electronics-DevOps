@@ -2,3 +2,7 @@ mongo_root_user: gada_root
 mongo_root_password: "{{ vault_mongo_root_password }}"
 ansible_user: ubuntu
 ansible_ssh_private_key_file: ~/.ssh/gada-key.pem
+app_host: "{{ groups['app'] | intersect(groups[env_name]) | first }}"
+data_host: "{{ groups['data'] | intersect(groups[env_name]) | first }}"
+app_private_ip: "{{ hostvars[app_host].ansible_default_ipv4.address }}"
+data_private_ip: "{{ hostvars[data_host].ansible_default_ipv4.address }}"
