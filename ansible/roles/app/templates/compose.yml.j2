@@ -1,8 +1,10 @@
 services:
   app:
-    image: {{ app_image }}:{{ app_version }}
+    image: {{ app_image }}:${APP_VERSION}
     restart: unless-stopped
     env_file: app.env
+    environment:
+      APP_VERSION: ${APP_VERSION}
 
   nginx:
     image: nginx:1.27-alpine

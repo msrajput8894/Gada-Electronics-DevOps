@@ -1,13 +1,27 @@
-- name: Refuse to deploy without an explicit version
-  ansible.builtin.assert:
-    that: app_version is defined
-    fail_msg: "Pass the image tag: -e app_version=<commit SHA>"
-
 - name: Create the app stack directory
   ansible.builtin.file:
     path: /opt/gada-app
     state: directory
     mode: "0750"
+
+- name: Look for an existing version file
+  ansible.builtin.stat:
+    path: /opt/gada-app/.env
+  register: version_file
+
+- name: Require a version on the first deploy
+  ansible.builtin.assert:
+    that: app_version is defined
+    fail_msg: "First deploy needs -e app_version=<commit SHA>; after that gada-deploy owns the version"
+  when: not version_file.stat.exists
+
+- name: Seed the version file (only when missing, gada-deploy owns it afterwards)
+  ansible.builtin.copy:
+    dest: /opt/gada-app/.env
+    content: "APP_VERSION={{ app_version }}\n"
+    mode: "0644"
+    force: false
+  when: not version_file.stat.exists
 
 - name: Write the environment file (secrets)
   ansible.builtin.template:
@@ -29,6 +43,14 @@
     src: nginx.conf
     dest: /opt/gada-app/nginx.conf
     mode: "0644"
+
+- name: Install the deploy script
+  ansible.builtin.copy:
+    src: gada-deploy.sh
+    dest: /usr/local/bin/gada-deploy
+    owner: root
+    group: root
+    mode: "0755"
 
 - name: Allow HTTP through the host firewall
   community.general.ufw:
