@@ -1,2 +1,4 @@
 mongo_root_user: gada_root
 mongo_root_password: "{{ vault_mongo_root_password }}"
+ansible_user: ubuntu
+ansible_ssh_private_key_file: ~/.ssh/gada-key.pem
