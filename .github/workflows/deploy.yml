@@ -1,0 +1,22 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Image tag to deploy (40-character commit SHA)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    uses: ./.github/workflows/deploy-env.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: stage
+      version: ${{ inputs.version }}
