@@ -1,7 +1,7 @@
 variable "github_repo" {
   description = "owner/repo exactly as GitHub spells it"
   type        = string
-  default     = "msrajput8894/Gada-Electronics-DevOps"
+  default     = "msrajput8894@114761457/Gada-Electronics-DevOps@1445887428"
 }
 
 locals {
