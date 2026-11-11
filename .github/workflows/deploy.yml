@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Image tag to deploy (40-character commit SHA)
+        description: Image tag to promote (40-character commit SHA)
         required: true
         type: string
 
@@ -19,4 +19,24 @@ jobs:
       contents: read
     with:
       environment: stage
+      version: ${{ inputs.version }}
+
+  preprod:
+    needs: stage
+    uses: ./.github/workflows/deploy-env.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: preprod
+      version: ${{ inputs.version }}
+
+  prod:
+    needs: preprod
+    uses: ./.github/workflows/deploy-env.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: prod
       version: ${{ inputs.version }}
