@@ -2,13 +2,13 @@
 
 # Stage 1: install production dependencies only.
 # Copying the manifests first means this layer is cached until package*.json changes.
-FROM node:22-alpine AS deps
+FROM node:26-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 # Stage 2: the image that actually runs. It contains no npm cache and no dev tools.
-FROM node:22-alpine AS runtime
+FROM node:26-alpine AS runtime
 ARG APP_VERSION=dev
 ENV NODE_ENV=production \
     APP_VERSION=$APP_VERSION
