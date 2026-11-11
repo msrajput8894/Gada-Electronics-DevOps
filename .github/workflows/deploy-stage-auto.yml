@@ -1,0 +1,21 @@
+name: Deploy stage automatically
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    uses: ./.github/workflows/deploy-env.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: stage
+      version: ${{ github.event.workflow_run.head_sha }}
