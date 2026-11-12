@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gada-app
+  namespace: gada
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: gada-app
+  template:
+    metadata:
+      labels:
+        app: gada-app
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/msrajput8894/gada-electronics:ae7b8e7951b5221d160519f5a63c124664fb1147
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: APP_VERSION
+              value: ae7b8e7951b5221d160519f5a63c124664fb1147
+            - name: ADMIN_EMAIL
+              value: admin@gada.local
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gada-secrets
+                  key: mongo-root-password
+            - name: MONGO_URI
+              value: mongodb://gada_root:$(MONGO_PASSWORD)@mongo-0.mongo.gada.svc.cluster.local:27017/gada?authSource=admin
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gada-secrets
+                  key: jwt-secret
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gada-secrets
+                  key: admin-password
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 20
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gada-app
+  namespace: gada
+spec:
+  selector:
+    app: gada-app
+  ports:
+    - port: 80
+      targetPort: 3000
