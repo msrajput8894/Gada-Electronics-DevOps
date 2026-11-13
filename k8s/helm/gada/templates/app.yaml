@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gada-app
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- if not .Values.hpa.enabled }}
+  replicas: {{ .Values.app.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: gada-app
+  template:
+    metadata:
+      labels:
+        app: gada-app
+    spec:
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: APP_VERSION
+              value: {{ .Values.image.tag | quote }}
+            - name: ADMIN_EMAIL
+              value: {{ .Values.app.adminEmail | quote }}
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: mongo-root-password
+            - name: MONGO_URI
+              value: mongodb://gada_root:$(MONGO_PASSWORD)@mongo-0.mongo.{{ .Release.Namespace }}.svc.cluster.local:27017/gada?authSource=admin
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: jwt-secret
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: admin-password
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 20
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gada-app
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: gada-app
+  ports:
+    - port: 80
+      targetPort: 3000
