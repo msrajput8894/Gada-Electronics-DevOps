@@ -1,0 +1,33 @@
+image:
+  repository: ghcr.io/msrajput8894/gada-electronics
+  tag: ae7b8e7951b5221d160519f5a63c124664fb1147
+
+secretName: gada-secrets
+
+app:
+  replicas: 2
+  adminEmail: admin@gada.local
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+mongo:
+  storage: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPU: 50
+
+ingress:
+  host: ""
