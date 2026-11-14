@@ -17,6 +17,8 @@ spec:
       app: gada-app
   template:
     metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app: gada-app
     spec:
@@ -25,15 +27,12 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           ports:
             - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: gada-config
           env:
-            - name: NODE_ENV
-              value: production
-            - name: PORT
-              value: "3000"
             - name: APP_VERSION
               value: {{ .Values.image.tag | quote }}
-            - name: ADMIN_EMAIL
-              value: {{ .Values.app.adminEmail | quote }}
             - name: MONGO_PASSWORD
               valueFrom:
                 secretKeyRef:
