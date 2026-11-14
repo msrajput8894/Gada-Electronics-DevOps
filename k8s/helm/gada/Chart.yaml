@@ -1,0 +1,6 @@
+apiVersion: v2
+name: gada
+description: Gada Electronics (app + MongoDB)
+type: application
+version: 0.1.0
+appVersion: "ae7b8e7951b5221d160519f5a63c124664fb1147"
