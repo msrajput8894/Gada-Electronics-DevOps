@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const config = require('./config');
 const { createApp } = require('./app');
 const { log } = require('./middleware/logger');
+const { startMetricsServer } = require("./metrics");
 
 async function main() {
   // Fail fast if the database is unreachable: a supervisor (systemd, Docker, Kubernetes) restarts us.
@@ -13,6 +14,7 @@ async function main() {
   const server = createApp().listen(config.port, () => {
     log('info', 'server listening', { port: config.port, env: config.env, version: config.appVersion });
   });
+  startMetricsServer(Number(process.env.METRICS_PORT) || 9464);
 
   // Graceful shutdown: stop taking new connections, finish in-flight requests, close the database.
   // Docker and Kubernetes send SIGTERM before killing a container.
