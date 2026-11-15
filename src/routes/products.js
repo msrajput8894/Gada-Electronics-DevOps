@@ -8,6 +8,15 @@ const { str, escapeRegex, parsePositiveInt, requireObjectId } = require('../vali
 
 const router = express.Router();
 
+// Allowed sort orders. The client sends a key; it never sends field names, so user input
+// cannot become a MongoDB sort operator. _id is a tie-breaker so pages are stable.
+const SORTS = {
+  newest: { createdAt: -1, _id: -1 },
+  price_asc: { price: 1, _id: 1 },
+  price_desc: { price: -1, _id: -1 },
+  name_asc: { name: 1, _id: 1 },
+};
+
 const EDITABLE = ['name', 'description', 'category', 'price', 'stock', 'imageUrl'];
 
 // Copy only whitelisted fields from the request body (prevents mass assignment).
@@ -22,17 +31,24 @@ router.get(
     const category = str(req.query.category);
     if (q) filter.name = new RegExp(escapeRegex(q), 'i');
     if (category) filter.category = category.toLowerCase();
+    if (str(req.query.inStock) === 'true') filter.stock = { $gt: 0 };
+
+    const sortKey = str(req.query.sort) || 'newest';
+    if (!Object.hasOwn(SORTS, sortKey)) {
+      throw new HttpError(400, `sort must be one of: ${Object.keys(SORTS).join(', ')}`);
+    }
 
     const page = parsePositiveInt(req.query.page, 1, 100000);
     const limit = parsePositiveInt(req.query.limit, 12, 50);
 
-    const [items, total] = await Promise.all([
-      Product.find(filter)
-        .sort({ createdAt: -1, _id: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit),
-      Product.countDocuments(filter),
-    ]);
+    let query = Product.find(filter)
+      .sort(SORTS[sortKey])
+      .skip((page - 1) * limit)
+      .limit(limit);
+    // Sort names without regard to case ("apple" next to "Apple", not after "Zebra").
+    if (sortKey === 'name_asc') query = query.collation({ locale: 'en', strength: 2 });
+
+    const [items, total] = await Promise.all([query, Product.countDocuments(filter)]);
     res.json({ items, page, limit, total, pages: Math.ceil(total / limit) });
   })
 );

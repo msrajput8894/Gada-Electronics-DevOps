@@ -11,8 +11,11 @@
     <h1>Gada Electronics</h1>
     <form id="search" class="search">
       <input id="q" type="search" placeholder="Search products" aria-label="Search products">
-      <select id="category" aria-label="Category">
-        <option value="">All categories</option>
+      <select id="sort" aria-label="Sort by">
+        <option value="newest">Newest</option>
+        <option value="price_asc">Price: low to high</option>
+        <option value="price_desc">Price: high to low</option>
+        <option value="name_asc">Name: A to Z</option>
       </select>
     </form>
     <nav class="nav">
@@ -25,6 +28,11 @@
   </header>
 
   <main>
+    <nav id="categories" class="chips" aria-label="Categories"></nav>
+    <div class="toolbar">
+      <label class="check"><input id="instock" type="checkbox"> In stock only</label>
+      <span id="count" class="count" aria-live="polite"></span>
+    </div>
     <p id="msg" role="status" class="msg"></p>
     <section id="products" class="grid" aria-label="Products"></section>
     <div id="pager" class="pager"></div>
