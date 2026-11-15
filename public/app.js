@@ -12,7 +12,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
+const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits:0 });
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -136,6 +136,16 @@ function renderProducts({ items, page, pages }) {
 
 // ---------- cart ----------
 
+// A request is in flight: ignore extra clicks so a double click cannot place two orders
+// or send two quantity changes.
+let busy = false;
+
+function panelNotify(text, isError = false) {
+  const msg = $('panel-msg');
+  msg.textContent = text;
+  msg.className = isError ? 'msg error' : 'msg';
+}
+
 async function addToCart(productId) {
   if (!state.user) return openAuth('login');
   try {
@@ -160,56 +170,150 @@ async function refreshCartCount() {
   }
 }
 
-async function showCart() {
+// One cart line: name and price, a - / + stepper, the line total and a Remove button.
+function cartLine(line) {
+  const { product, quantity } = line;
+  const limit = Math.min(99, product.stock);
+  const short = quantity > product.stock;
+  return el(
+    'div',
+    { class: short ? 'line cart-line short' : 'line cart-line' },
+    el(
+      'div',
+      { class: 'line-info' },
+      el('strong', {}, product.name),
+      el('small', {}, `${money.format(product.price)} each`),
+      short
+        ? el('small', { class: 'warn' }, product.stock === 0 ? 'Out of stock' : `Only ${product.stock} left, lower the quantity`)
+        : ''
+    ),
+    el(
+      'div',
+      { class: 'stepper' },
+      el(
+        'button',
+        { type: 'button', 'aria-label': `Decrease quantity of ${product.name}`, onclick: () => changeQuantity(product.id, quantity - 1) },
+        '−'
+      ),
+      el('span', { class: 'qty', 'aria-label': `Quantity of ${product.name}` }, String(quantity)),
+      el(
+        'button',
+        {
+          type: 'button',
+          'aria-label': `Increase quantity of ${product.name}`,
+          ...(quantity >= limit ? { disabled: '' } : {}),
+          onclick: () => changeQuantity(product.id, quantity + 1),
+        },
+        '+'
+      )
+    ),
+    el('strong', { class: 'line-total' }, money.format(line.lineTotal)),
+    el('button', { type: 'button', class: 'link danger', 'aria-label': `Remove ${product.name}`, onclick: () => removeItem(product.id) }, 'Remove')
+  );
+}
+
+// Renders the cart in the side panel. `note` is an optional { text, isError } message shown
+// at the top, used to report the result of the action that triggered the re-render.
+async function showCart(note) {
   if (!state.user) return openAuth('login');
   try {
     const { cart } = await api('/cart');
     const body = $('panel-body');
+    $('cart-count').textContent = cart.itemCount;
     if (cart.items.length === 0) {
-      body.replaceChildren(el('p', {}, 'Your cart is empty.'));
-    } else {
       body.replaceChildren(
-        ...cart.items.map((line) =>
+        el('p', { class: 'empty' }, 'Your cart is empty.'),
+        el('button', { type: 'button', class: 'primary', onclick: closePanel }, 'Browse products')
+      );
+    } else {
+      const blocked = cart.items.some((line) => line.quantity > line.product.stock);
+      body.replaceChildren(
+        ...cart.items.map(cartLine),
+        el(
+          'div',
+          { class: 'cart-summary' },
+          el('div', { class: 'total' }, el('span', {}, `Total (${cart.itemCount} ${cart.itemCount === 1 ? 'item' : 'items'})`), el('span', {}, money.format(cart.total))),
+          el(
+            'button',
+            { id: 'checkout-btn', type: 'button', class: 'primary wide', ...(blocked ? { disabled: '' } : {}), onclick: checkout },
+            'Place order'
+          ),
+          blocked ? el('p', { class: 'error' }, 'Fix the highlighted items before placing your order.') : '',
           el(
             'div',
-            { class: 'line' },
-            el('div', {}, line.product.name, el('small', {}, `${money.format(line.product.price)} each`)),
-            el('input', {
-              type: 'number', min: '0', max: '99', value: String(line.quantity), 'aria-label': `Quantity of ${line.product.name}`,
-              onchange: (event) => changeQuantity(line.product.id, Number(event.target.value)),
-            }),
-            el('strong', {}, money.format(line.lineTotal))
+            { class: 'row' },
+            el('button', { type: 'button', class: 'link', onclick: closePanel }, 'Continue shopping'),
+            el('button', { type: 'button', class: 'link danger', onclick: clearCart }, 'Clear cart')
           )
-        ),
-        el('div', { class: 'total' }, el('span', {}, 'Total'), el('span', {}, money.format(cart.total))),
-        el('button', { class: 'primary', onclick: checkout }, 'Place order')
+        )
       );
     }
-    $('cart-count').textContent = cart.itemCount;
     openPanel('Your cart');
+    if (note) panelNotify(note.text, note.isError);
   } catch (err) {
     notify(err.message, true);
   }
 }
 
-async function changeQuantity(productId, quantity) {
+// Run one cart change, then redraw the cart. Errors (for example "Only 3 of X in stock")
+// are shown inside the panel, where the user is looking, not behind it.
+async function cartAction(run, successText) {
+  if (busy) return;
+  busy = true;
+  let note = null;
   try {
-    await api(`/cart/items/${productId}`, { method: 'PATCH', body: { quantity } });
+    await run();
+    if (successText) note = { text: successText, isError: false };
   } catch (err) {
-    notify(err.message, true);
+    note = { text: err.message, isError: true };
+  } finally {
+    busy = false;
   }
-  showCart();
+  await showCart(note);
 }
+
+const changeQuantity = (productId, quantity) =>
+  cartAction(() => api(`/cart/items/${productId}`, { method: 'PATCH', body: { quantity } }));
+
+const removeItem = (productId) => cartAction(() => api(`/cart/items/${productId}`, { method: 'DELETE' }), 'Item removed.');
+
+const clearCart = () => cartAction(() => api('/cart', { method: 'DELETE' }), 'Cart cleared.');
 
 async function checkout() {
+  if (busy) return;
+  busy = true;
+  const button = $('checkout-btn');
+  button.disabled = true;
+  button.textContent = 'Placing order...';
   try {
-    await api('/orders', { method: 'POST' });
-    notify('Order placed. Thank you!');
+    const { order } = await api('/orders', { method: 'POST' });
+    busy = false;
     await Promise.all([loadProducts(), refreshCartCount()]);
-    showOrders();
+    showOrderPlaced(order);
   } catch (err) {
-    notify(err.message, true);
+    busy = false;
+    // Stock may have changed since the cart was drawn: redraw it and explain.
+    await showCart({ text: err.message, isError: true });
+    await loadProducts();
   }
+}
+
+function showOrderPlaced(order) {
+  $('panel-body').replaceChildren(
+    el('p', { class: 'confirm' }, 'Thank you! Your order has been placed.'),
+    el('p', {}, `Order ${order._id.slice(-6)}`),
+    ...order.items.map((item) =>
+      el('div', { class: 'line' }, el('span', {}, `${item.quantity} x ${item.name}`), el('strong', {}, money.format(item.price * item.quantity)))
+    ),
+    el('div', { class: 'total' }, el('span', {}, 'Total'), el('span', {}, money.format(order.total))),
+    el(
+      'div',
+      { class: 'row' },
+      el('button', { type: 'button', class: 'primary', onclick: showOrders }, 'View my orders'),
+      el('button', { type: 'button', class: 'link', onclick: closePanel }, 'Keep shopping')
+    )
+  );
+  openPanel('Order placed');
 }
 
 // ---------- orders ----------
@@ -305,6 +409,7 @@ async function setOrderStatus(id, status) {
 
 function openPanel(title) {
   $('panel-title').textContent = title;
+  panelNotify('');
   $('panel').hidden = false;
 }
 function closePanel() {
@@ -347,6 +452,9 @@ $('cart-btn').addEventListener('click', showCart);
 $('orders-btn').addEventListener('click', showOrders);
 $('admin-btn').addEventListener('click', showAdmin);
 $('panel-close').addEventListener('click', closePanel);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('panel').hidden) closePanel();
+});
 
 $('search').addEventListener('submit', (event) => {
   event.preventDefault();
@@ -364,3 +472,4 @@ renderNav();
 loadCategories().catch((err) => notify(err.message, true));
 loadProducts();
 refreshCartCount();
+

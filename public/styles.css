@@ -44,13 +44,18 @@ body {
   display: flex;
   gap: 8px;
   flex: 1;
-  min-width: 240px;
+  min-width: min(240px, 100%);
 }
 .search input {
   flex: 1;
+  min-width: 0;
+}
+.search select {
+  max-width: 45%;
 }
 .nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -242,4 +247,85 @@ dialog input {
   display: grid;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+button:disabled:hover {
+  border-color: var(--line);
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button.wide {
+  width: 100%;
+  padding: 12px;
+}
+
+/* cart */
+.panel .msg {
+  margin: 8px 0 0;
+}
+.cart-line {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas:
+    "info stepper total"
+    "info remove remove";
+  gap: 4px 12px;
+  align-items: center;
+}
+.cart-line .line-info {
+  grid-area: info;
+}
+.cart-line .stepper {
+  grid-area: stepper;
+}
+.cart-line .line-total {
+  grid-area: total;
+  text-align: right;
+  min-width: 72px;
+}
+.cart-line > button.link {
+  grid-area: remove;
+  justify-self: end;
+  padding: 0;
+  font-size: 13px;
+}
+.cart-line.short {
+  background: #fff4f2;
+}
+.cart-line .warn {
+  color: var(--danger);
+}
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.stepper button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  line-height: 1;
+}
+.qty {
+  min-width: 24px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.cart-summary {
+  margin-top: 8px;
+}
+.empty {
+  color: var(--muted);
+}
+.confirm {
+  font-weight: 600;
+  color: #067647;
 }
