@@ -52,6 +52,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.value }}
     permissions:
       contents: read
       packages: write
@@ -109,3 +111,34 @@ jobs:
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
+
+  update-stage:
+    name: Point stage at the new image
+    needs: image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: config-repo-update
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: msrajput8894/Gada-Electronics-Config
+          ssh-key: ${{ secrets.CONFIG_DEPLOY_KEY }}
+      - name: Set the stage image tag
+        env:
+          NEW_TAG: ${{ needs.image.outputs.version }}
+        run: |
+          sed -i "s|^  tag: .*|  tag: \"${NEW_TAG}\"|" envs/stage/values.yaml
+          if git diff --quiet; then
+            echo "stage already uses ${NEW_TAG}"
+            exit 0
+          fi
+          git config user.name "gada-ci"
+          git config user.email "gada-ci@users.noreply.github.com"
+          git commit -am "stage: deploy ${NEW_TAG} (app commit ${GITHUB_SHA})"
+          git pull --rebase origin main
+          git push origin HEAD:main
