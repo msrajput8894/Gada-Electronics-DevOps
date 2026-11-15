@@ -5,6 +5,7 @@ const express = require('express');
 const helmet = require('helmet');
 const { requestLogger } = require('./middleware/logger');
 const { notFound, errorHandler } = require('./middleware/error');
+const { metricsMiddleware } = require("./metrics");
 
 function createApp() {
   const app = express();
@@ -25,6 +26,7 @@ function createApp() {
     })
   );
   app.use(requestLogger);
+  app.use(metricsMiddleware);
   app.use(express.json({ limit: '100kb' }));
 
   app.use(require('./routes/health'));
