@@ -329,3 +329,51 @@ button.wide {
   font-weight: 600;
   color: #067647;
 }
+
+/* browsing: category chips, toolbar, stock badges */
+.chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+.chip {
+  flex: none;
+  border-radius: 999px;
+  padding: 6px 14px;
+  text-transform: capitalize;
+}
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 14px;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.check input {
+  padding: 0;
+}
+.count {
+  color: var(--muted);
+}
+.stock.low {
+  color: #b54708;
+  font-weight: 600;
+}
+.stock.out {
+  color: var(--danger);
+  font-weight: 600;
+}

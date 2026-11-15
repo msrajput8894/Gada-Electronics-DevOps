@@ -4,10 +4,20 @@
 // All text is inserted with textContent / createTextNode, never innerHTML, so product names
 // and other user-supplied values cannot inject markup (XSS).
 
+// Filters live in the URL (?category=audio&sort=price_asc&instock=1&q=phone&page=2), so a refresh,
+// the back button or a shared link shows the same list.
+const initial = new URLSearchParams(location.search);
+const SORT_KEYS = ['newest', 'price_asc', 'price_desc', 'name_asc'];
+const LOW_STOCK = 5; // show "Only N left" at or below this
+
 const state = {
   token: sessionStorage.getItem('token'),
   user: JSON.parse(sessionStorage.getItem('user') || 'null'),
-  page: 1,
+  page: Math.max(1, parseInt(initial.get('page'), 10) || 1),
+  category: initial.get('category') || '',
+  sort: SORT_KEYS.includes(initial.get('sort')) ? initial.get('sort') : 'newest',
+  inStock: initial.get('instock') === '1',
+  categories: [],
   authMode: 'login',
 };
 
@@ -84,21 +94,64 @@ function renderNav() {
 
 async function loadCategories() {
   const { categories } = await api('/products/categories');
-  const select = $('category');
-  for (const name of categories) select.append(el('option', { value: name }, name));
+  state.categories = categories;
+  renderCategories();
+}
+
+// "All" plus one chip per category. The active chip is marked for screen readers too.
+function renderCategories() {
+  const chip = (label, value) =>
+    el(
+      'button',
+      {
+        type: 'button',
+        class: state.category === value ? 'chip active' : 'chip',
+        'aria-pressed': String(state.category === value),
+        onclick: () => {
+          state.category = value;
+          state.page = 1;
+          renderCategories();
+          loadProducts();
+        },
+      },
+      label
+    );
+  $('categories').replaceChildren(chip('All', ''), ...state.categories.map((name) => chip(name, name)));
+}
+
+function syncUrl(q) {
+  const url = new URLSearchParams();
+  if (q) url.set('q', q);
+  if (state.category) url.set('category', state.category);
+  if (state.sort !== 'newest') url.set('sort', state.sort);
+  if (state.inStock) url.set('instock', '1');
+  if (state.page > 1) url.set('page', String(state.page));
+  const qs = url.toString();
+  history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
 }
 
 async function loadProducts() {
-  const params = new URLSearchParams({ page: String(state.page) });
-  if ($('q').value.trim()) params.set('q', $('q').value.trim());
-  if ($('category').value) params.set('category', $('category').value);
+  const q = $('q').value.trim();
+  const params = new URLSearchParams({ page: String(state.page), sort: state.sort });
+  if (q) params.set('q', q);
+  if (state.category) params.set('category', state.category);
+  if (state.inStock) params.set('inStock', 'true');
+  syncUrl(q);
   try {
     const data = await api(`/products?${params}`);
     renderProducts(data);
-    notify(data.total === 0 ? 'No products found.' : '');
+    $('count').textContent = data.total === 1 ? '1 product' : `${data.total} products`;
+    notify(data.total === 0 ? 'No products found. Try a different search or filter.' : '');
   } catch (err) {
     notify(err.message, true);
   }
+}
+
+// "Out of stock", "Only 3 left" (urgency, at or below LOW_STOCK) or "In stock".
+function stockBadge(stock) {
+  if (stock <= 0) return el('span', { class: 'stock out' }, 'Out of stock');
+  if (stock <= LOW_STOCK) return el('span', { class: 'stock low' }, `Only ${stock} left`);
+  return el('span', { class: 'stock' }, 'In stock');
 }
 
 function renderProducts({ items, page, pages }) {
@@ -113,7 +166,7 @@ function renderProducts({ items, page, pages }) {
         el('h3', {}, p.name),
         el('p', {}, p.description),
         el('span', { class: 'price' }, money.format(p.price)),
-        el('span', { class: 'stock' }, p.stock > 0 ? `${p.stock} in stock` : 'Out of stock'),
+        stockBadge(p.stock),
         el(
           'button',
           { class: 'primary', ...(p.stock > 0 ? {} : { disabled: '' }), onclick: () => addToCart(p._id) },
@@ -461,7 +514,13 @@ $('search').addEventListener('submit', (event) => {
   state.page = 1;
   loadProducts();
 });
-$('category').addEventListener('change', () => {
+$('sort').addEventListener('change', () => {
+  state.sort = $('sort').value;
+  state.page = 1;
+  loadProducts();
+});
+$('instock').addEventListener('change', () => {
+  state.inStock = $('instock').checked;
   state.page = 1;
   loadProducts();
 });
@@ -469,6 +528,9 @@ $('category').addEventListener('change', () => {
 // ---------- start ----------
 
 renderNav();
+$('q').value = initial.get('q') || '';
+$('sort').value = state.sort;
+$('instock').checked = state.inStock;
 loadCategories().catch((err) => notify(err.message, true));
 loadProducts();
 refreshCartCount();

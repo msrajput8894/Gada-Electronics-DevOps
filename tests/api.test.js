@@ -109,6 +109,33 @@ describe('products', () => {
     expect(byCategory.body.total).toBe(1);
   });
 
+  test('sorts by price and name, and rejects unknown sort keys', async () => {
+    await makeProduct({ name: 'banana', price: 300 });
+    await makeProduct({ name: 'Apple', price: 100 });
+    await makeProduct({ name: 'Cherry', price: 200 });
+    const names = async (sort) =>
+      (await request(app).get(`/api/products?sort=${sort}`)).body.items.map((p) => p.name);
+
+    expect(await names('price_asc')).toEqual(['Apple', 'Cherry', 'banana']);
+    expect(await names('price_desc')).toEqual(['banana', 'Cherry', 'Apple']);
+    expect(await names('name_asc')).toEqual(['Apple', 'banana', 'Cherry']); // case-insensitive
+    expect((await request(app).get('/api/products')).body.items[0].name).toBe('Cherry'); // newest first
+
+    const bad = await request(app).get('/api/products?sort=price');
+    expect(bad.status).toBe(400);
+    expect((await request(app).get('/api/products?sort=constructor')).status).toBe(400);
+    expect((await request(app).get('/api/products?sort[$ne]=x')).status).toBe(200); // not a string: default order
+  });
+
+  test('inStock=true hides sold-out products', async () => {
+    await makeProduct({ name: 'Available', stock: 3 });
+    await makeProduct({ name: 'Sold out', stock: 0 });
+    const res = await request(app).get('/api/products?inStock=true');
+    expect(res.body.items.map((p) => p.name)).toEqual(['Available']);
+    expect(res.body.total).toBe(1);
+    expect((await request(app).get('/api/products')).body.total).toBe(2);
+  });
+
   test('treats query operators as plain text, not as MongoDB operators', async () => {
     await makeProduct();
     const res = await request(app).get('/api/products?q[$ne]=zzz&category[$ne]=zzz');
