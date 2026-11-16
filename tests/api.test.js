@@ -283,4 +283,51 @@ describe('orders', () => {
     expect(res.status).toBe(200);
     expect((await Product.findById(product.id)).stock).toBe(10);
   });
+
+  test('a customer can cancel their own placed order, once, and stock comes back', async () => {
+    const { token } = await register();
+    const product = await makeProduct({ stock: 10 });
+    const order = await placeOrder(token, product, 3);
+    expect((await Product.findById(product.id)).stock).toBe(7);
+
+    const res = await request(app).post(`/api/orders/${order._id}/cancel`).set(auth(token));
+    expect(res.status).toBe(200);
+    expect(res.body.order.status).toBe('cancelled');
+    expect((await Product.findById(product.id)).stock).toBe(10);
+
+    const again = await request(app).post(`/api/orders/${order._id}/cancel`).set(auth(token));
+    expect(again.status).toBe(409);
+    expect((await Product.findById(product.id)).stock).toBe(10); // not restored twice
+  });
+
+  test('customers cannot cancel shipped orders or other customers orders', async () => {
+    const asha = await register('asha@example.com', 'Asha');
+    const ravi = await register('ravi@example.com', 'Ravi');
+    const admin = await adminToken();
+    const product = await makeProduct({ stock: 10 });
+    const order = await placeOrder(asha.token, product);
+
+    expect((await request(app).post(`/api/orders/${order._id}/cancel`).set(auth(ravi.token))).status).toBe(404);
+    expect((await request(app).post(`/api/orders/${order._id}/cancel`)).status).toBe(401);
+    expect((await request(app).post('/api/orders/not-an-id/cancel').set(auth(asha.token))).status).toBe(400);
+
+    await request(app).patch(`/api/orders/${order._id}/status`).set(auth(admin)).send({ status: 'shipped' });
+    const late = await request(app).post(`/api/orders/${order._id}/cancel`).set(auth(asha.token));
+    expect(late.status).toBe(409);
+    expect((await Product.findById(product.id)).stock).toBe(9);
+  });
+
+  test('admins see who placed each order, customers do not get user details', async () => {
+    const asha = await register('asha@example.com', 'Asha');
+    const admin = await adminToken();
+    const product = await makeProduct({ stock: 10 });
+    await placeOrder(asha.token, product);
+
+    const all = await request(app).get('/api/orders?all=true').set(auth(admin));
+    expect(all.body.orders[0].user).toMatchObject({ name: 'Asha', email: 'asha@example.com' });
+    expect(all.body.orders[0].user.passwordHash).toBeUndefined();
+
+    const mine = await request(app).get('/api/orders').set(auth(asha.token));
+    expect(typeof mine.body.orders[0].user).toBe('string'); // just an id
+  });
 });

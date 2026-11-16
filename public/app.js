@@ -362,7 +362,7 @@ function showOrderPlaced(order) {
     el(
       'div',
       { class: 'row' },
-      el('button', { type: 'button', class: 'primary', onclick: showOrders }, 'View my orders'),
+      el('button', { type: 'button', class: 'primary', onclick: () => showOrders() }, 'View my orders'),
       el('button', { type: 'button', class: 'link', onclick: closePanel }, 'Keep shopping')
     )
   );
@@ -371,97 +371,269 @@ function showOrderPlaced(order) {
 
 // ---------- orders ----------
 
-const orderLine = (order, actions = []) =>
-  el(
-    'div',
-    { class: 'line' },
-    el(
-      'div',
-      {},
-      `Order ${order._id.slice(-6)} · ${new Date(order.createdAt).toLocaleDateString()}`,
-      el('small', {}, order.items.map((i) => `${i.quantity} x ${i.name}`).join(', '))
-    ),
-    el('div', {}, el('strong', {}, money.format(order.total)), ' ', el('span', { class: 'status' }, order.status), ' ', actions)
-  );
+const STATUS_LABEL = { placed: 'Placed', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled' };
+const dateTime = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 
-async function showOrders() {
+const statusBadge = (status) => el('span', { class: `status status-${status}` }, STATUS_LABEL[status] || status);
+
+// "All (5)  Placed (2)  Shipped (1) ..." Only statuses that exist are shown.
+function statusFilter(orders, current, onPick) {
+  const count = (status) => (status === 'all' ? orders.length : orders.filter((o) => o.status === status).length);
+  const chip = (status, label) =>
+    el(
+      'button',
+      {
+        type: 'button',
+        class: current === status ? 'chip active' : 'chip',
+        'aria-pressed': String(current === status),
+        onclick: () => onPick(status),
+      },
+      `${label} (${count(status)})`
+    );
+  return el(
+    'div',
+    { class: 'chips filter' },
+    chip('all', 'All'),
+    ...Object.keys(STATUS_LABEL).filter((s) => count(s) > 0).map((s) => chip(s, STATUS_LABEL[s]))
+  );
+}
+
+// One order as a card: reference and status, date, items with line totals, total, then actions.
+function orderCard(order, actions = [], customer = '') {
+  return el(
+    'article',
+    { class: 'order' },
+    el('div', { class: 'order-head' }, el('strong', {}, `Order ${order._id.slice(-6).toUpperCase()}`), statusBadge(order.status)),
+    el('small', { class: 'order-meta' }, [dateTime.format(new Date(order.createdAt)), customer].filter(Boolean).join(' · ')),
+    ...order.items.map((item) =>
+      el('div', { class: 'order-item' }, el('span', {}, `${item.quantity} x ${item.name}`), el('span', {}, money.format(item.price * item.quantity)))
+    ),
+    el('div', { class: 'order-foot' }, el('strong', {}, `Total ${money.format(order.total)}`), el('span', { class: 'actions' }, actions))
+  );
+}
+
+async function showOrders({ filter = 'all', note } = {}) {
   try {
     const { orders } = await api('/orders');
+    const shown = filter === 'all' ? orders : orders.filter((o) => o.status === filter);
+    const cards = shown.map((order) =>
+      orderCard(
+        order,
+        order.status === 'placed'
+          ? [el('button', { type: 'button', class: 'danger', onclick: () => cancelMyOrder(order._id, filter) }, 'Cancel order')]
+          : []
+      )
+    );
     $('panel-body').replaceChildren(
-      ...(orders.length ? orders.map((order) => orderLine(order)) : [el('p', {}, 'You have no orders yet.')])
+      ...(orders.length ? [statusFilter(orders, filter, (status) => showOrders({ filter: status }))] : []),
+      ...(cards.length ? cards : [el('p', { class: 'empty' }, orders.length ? 'No orders with this status.' : 'You have no orders yet.')])
     );
     openPanel('Your orders');
+    if (note) panelNotify(note.text, note.isError);
   } catch (err) {
     notify(err.message, true);
   }
+}
+
+async function cancelMyOrder(id, filter) {
+  if (!window.confirm('Cancel this order? The items go back into stock.')) return;
+  let note;
+  try {
+    await api(`/orders/${id}/cancel`, { method: 'POST' });
+    note = { text: 'Order cancelled.', isError: false };
+    await loadProducts();
+  } catch (err) {
+    note = { text: err.message, isError: true };
+  }
+  showOrders({ filter, note });
 }
 
 // ---------- admin ----------
 
 const NEXT_STATUS = { placed: ['shipped', 'cancelled'], shipped: ['delivered'] };
+const ACTION_LABEL = { shipped: 'Mark shipped', delivered: 'Mark delivered', cancelled: 'Cancel order' };
 
-async function showAdmin() {
+// Admin panel with two tabs. `ctx` carries where we are, so that after every action the same
+// tab, filter and search are redrawn together with a result message.
+async function showAdmin(ctx = {}) {
+  const view = { tab: 'orders', filter: 'all', q: '', ...ctx };
   try {
-    const { orders } = await api('/orders?all=true');
-    const field = (name, type, placeholder) =>
-      el('input', { name, type, placeholder, required: '', ...(type === 'number' ? { min: '0' } : {}) });
-    const form = el(
-      'form',
-      {
-        class: 'admin-form',
-        onsubmit: async (event) => {
-          event.preventDefault();
-          const data = Object.fromEntries(new FormData(event.target));
-          try {
-            await api('/products', {
-              method: 'POST',
-              body: { name: data.name, category: data.category, price: Number(data.price), stock: Number(data.stock) },
-            });
-            notify('Product added.');
-            await loadProducts();
-            showAdmin();
-          } catch (err) {
-            notify(err.message, true);
-          }
-        },
-      },
-      el('strong', {}, 'Add a product'),
-      field('name', 'text', 'Name'),
-      field('category', 'text', 'Category'),
-      field('price', 'number', 'Price (INR)'),
-      field('stock', 'number', 'Stock'),
-      el('button', { type: 'submit', class: 'primary' }, 'Add product')
-    );
-
-    const lines = orders.map((order) =>
-      orderLine(
-        order,
-        (NEXT_STATUS[order.status] || []).map((next) =>
-          el('button', { class: next === 'cancelled' ? 'danger' : '', onclick: () => setOrderStatus(order._id, next) }, next)
+    const tabs = el(
+      'div',
+      { class: 'tabs', role: 'tablist' },
+      ...[['orders', 'Orders'], ['products', 'Products']].map(([id, label]) =>
+        el(
+          'button',
+          {
+            type: 'button',
+            role: 'tab',
+            class: view.tab === id ? 'tab active' : 'tab',
+            'aria-selected': String(view.tab === id),
+            onclick: () => showAdmin({ tab: id }),
+          },
+          label
         )
       )
     );
-    $('panel-body').replaceChildren(form, el('strong', {}, 'All orders'), ...lines);
-    openPanel('Admin');
+    const content = view.tab === 'orders' ? await adminOrders(view) : await adminProducts(view);
+    $('panel-body').replaceChildren(tabs, ...content);
+    openPanel('Admin', true);
+    if (view.note) panelNotify(view.note.text, view.note.isError);
   } catch (err) {
     notify(err.message, true);
   }
 }
 
-async function setOrderStatus(id, status) {
+async function adminOrders(view) {
+  const { orders } = await api('/orders?all=true');
+  const shown = view.filter === 'all' ? orders : orders.filter((o) => o.status === view.filter);
+  const who = (order) => (order.user && order.user.name ? `${order.user.name} (${order.user.email})` : 'deleted customer');
+  const cards = shown.map((order) =>
+    orderCard(
+      order,
+      (NEXT_STATUS[order.status] || []).map((next) =>
+        el(
+          'button',
+          { type: 'button', class: next === 'cancelled' ? 'danger' : '', onclick: () => setOrderStatus(order._id, next, view) },
+          ACTION_LABEL[next]
+        )
+      ),
+      who(order)
+    )
+  );
+  return [
+    ...(orders.length ? [statusFilter(orders, view.filter, (filter) => showAdmin({ ...view, filter, note: undefined }))] : []),
+    ...(cards.length ? cards : [el('p', { class: 'empty' }, orders.length ? 'No orders with this status.' : 'No orders yet.')]),
+  ];
+}
+
+async function setOrderStatus(id, status, view) {
+  if (status === 'cancelled' && !window.confirm('Cancel this order? The items go back into stock.')) return;
+  let note;
   try {
     await api(`/orders/${id}/status`, { method: 'PATCH', body: { status } });
+    note = { text: `Order marked ${STATUS_LABEL[status].toLowerCase()}.`, isError: false };
     await loadProducts();
   } catch (err) {
-    notify(err.message, true);
+    note = { text: err.message, isError: true };
   }
-  showAdmin();
+  showAdmin({ ...view, note });
+}
+
+const MAX_ADMIN_PRODUCTS = 50;
+
+async function adminProducts(view) {
+  const params = new URLSearchParams({ limit: String(MAX_ADMIN_PRODUCTS), sort: 'name_asc' });
+  if (view.q) params.set('q', view.q);
+  const { items, total } = await api(`/products?${params}`);
+
+  const num = (name, value, min, step) =>
+    el('input', { name, type: 'number', value: String(value), min, step, required: '', 'aria-label': name });
+
+  const addForm = el(
+    'form',
+    {
+      class: 'admin-form',
+      onsubmit: async (event) => {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(event.target));
+        const note = await run(
+          () =>
+            api('/products', {
+              method: 'POST',
+              body: { name: data.name, category: data.category, description: data.description, price: Number(data.price), stock: Number(data.stock) },
+            }),
+          `Added ${data.name}.`
+        );
+        showAdmin({ ...view, note });
+      },
+    },
+    el('strong', {}, 'Add a product'),
+    el('input', { name: 'name', placeholder: 'Name', required: '', maxlength: '150' }),
+    el('input', { name: 'category', placeholder: 'Category (for example audio)', required: '' }),
+    el('input', { name: 'description', placeholder: 'Description (optional)', maxlength: '2000' }),
+    el('div', { class: 'row' }, el('input', { name: 'price', type: 'number', min: '0', step: '1', placeholder: 'Price (INR)', required: '' }), el('input', { name: 'stock', type: 'number', min: '0', step: '1', placeholder: 'Stock', required: '' })),
+    el('button', { type: 'submit', class: 'primary' }, 'Add product')
+  );
+
+  const search = el(
+    'form',
+    {
+      class: 'search-admin',
+      onsubmit: (event) => {
+        event.preventDefault();
+        showAdmin({ ...view, q: new FormData(event.target).get('q').trim() });
+      },
+    },
+    el('input', { name: 'q', type: 'search', value: view.q, placeholder: 'Search products', 'aria-label': 'Search products' }),
+    el('button', { type: 'submit' }, 'Search')
+  );
+
+  const rows = items.map((p) =>
+    el(
+      'form',
+      {
+        class: 'prod-row',
+        onsubmit: async (event) => {
+          event.preventDefault();
+          const data = Object.fromEntries(new FormData(event.target));
+          const note = await run(
+            () => api(`/products/${p._id}`, { method: 'PUT', body: { price: Number(data.price), stock: Number(data.stock) } }),
+            `Saved ${p.name}.`
+          );
+          await loadProducts();
+          showAdmin({ ...view, note });
+        },
+      },
+      el('div', { class: 'prod-info' }, el('strong', {}, p.name), el('small', {}, p.category)),
+      el('label', {}, 'Price', num('price', p.price, '0', '1')),
+      el('label', {}, 'Stock', num('stock', p.stock, '0', '1')),
+      el(
+        'span',
+        { class: 'actions' },
+        el('button', { type: 'submit' }, 'Save'),
+        el(
+          'button',
+          {
+            type: 'button',
+            class: 'danger',
+            'aria-label': `Delete ${p.name}`,
+            onclick: async () => {
+              if (!window.confirm(`Delete ${p.name}? This cannot be undone.`)) return;
+              const note = await run(() => api(`/products/${p._id}`, { method: 'DELETE' }), `Deleted ${p.name}.`);
+              await Promise.all([loadProducts(), loadCategories()]);
+              showAdmin({ ...view, note });
+            },
+          },
+          'Delete'
+        )
+      )
+    )
+  );
+
+  return [
+    addForm,
+    search,
+    el('small', { class: 'count' }, total > MAX_ADMIN_PRODUCTS ? `Showing the first ${MAX_ADMIN_PRODUCTS} of ${total}. Use search to find others.` : `${total} products`),
+    ...(rows.length ? rows : [el('p', { class: 'empty' }, 'No products found.')]),
+  ];
+}
+
+// Run one API call and turn its outcome into a { text, isError } panel message.
+async function run(call, successText) {
+  try {
+    await call();
+    return { text: successText, isError: false };
+  } catch (err) {
+    return { text: err.message, isError: true };
+  }
 }
 
 // ---------- panel and auth dialog ----------
 
-function openPanel(title) {
+function openPanel(title, wide = false) {
   $('panel-title').textContent = title;
+  $('panel').classList.toggle('wide', wide);
   panelNotify('');
   $('panel').hidden = false;
 }
@@ -501,9 +673,9 @@ $('auth-switch').addEventListener('click', () => openAuth(state.authMode === 'lo
 $('auth-cancel').addEventListener('click', () => $('auth-dialog').close());
 
 $('auth-btn').addEventListener('click', () => (state.user ? logout() : openAuth('login')));
-$('cart-btn').addEventListener('click', showCart);
-$('orders-btn').addEventListener('click', showOrders);
-$('admin-btn').addEventListener('click', showAdmin);
+$('cart-btn').addEventListener('click', () => showCart());
+$('orders-btn').addEventListener('click', () => showOrders());
+$('admin-btn').addEventListener('click', () => showAdmin());
 $('panel-close').addEventListener('click', closePanel);
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !$('panel').hidden) closePanel();
