@@ -75,11 +75,12 @@ router.get(
   asyncHandler(async (req, res) => {
     const filter = {};
     // Admins may list every order with ?all=true; everyone else only sees their own.
-    if (!(req.user.role === 'admin' && str(req.query.all) === 'true')) {
-      filter.user = req.user.id;
-    }
-    const orders = await Order.find(filter).sort({ createdAt: -1 }).limit(100);
-    res.json({ orders });
+    const listAll = req.user.role === 'admin' && str(req.query.all) === 'true';
+    if (!listAll) filter.user = req.user.id;
+    let query = Order.find(filter).sort({ createdAt: -1 }).limit(100);
+    // Admins also see who placed each order (name and email only, never the password hash).
+    if (listAll) query = query.populate('user', 'name email');
+    res.json({ orders: await query });
   })
 );
 
@@ -92,6 +93,27 @@ router.get(
       throw new HttpError(404, 'Order not found');
     }
     res.json({ order });
+  })
+);
+
+// Customers can cancel their own order while it is still "placed" (not yet shipped).
+// Stock goes back on the shelf. Admins cancel any order through the status route below.
+router.post(
+  '/:id/cancel',
+  asyncHandler(async (req, res) => {
+    const id = requireObjectId(req.params.id, 'order id');
+    const order = await Order.findById(id);
+    // 404 (not 403) for other people's orders, same as GET, so order ids cannot be probed.
+    if (!order || String(order.user) !== req.user.id) throw new HttpError(404, 'Order not found');
+    if (order.status !== 'placed') {
+      throw new HttpError(409, `Only placed orders can be cancelled (this one is ${order.status})`);
+    }
+
+    // Conditional update: if an admin ships it at the same moment, one of the two wins cleanly.
+    const updated = await Order.findOneAndUpdate({ _id: id, status: 'placed' }, { status: 'cancelled' }, { new: true });
+    if (!updated) throw new HttpError(409, 'Order was changed by someone else, reload and retry');
+    await restoreStock(order.items);
+    res.json({ order: updated });
   })
 );
 

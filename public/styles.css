@@ -208,11 +208,27 @@ main {
   padding: 16px 0;
 }
 .status {
-  text-transform: capitalize;
   font-size: 12px;
-  padding: 2px 8px;
+  font-weight: 600;
+  padding: 2px 10px;
   border-radius: 999px;
   background: #e8edf5;
+}
+.status-placed {
+  background: #e0ecff;
+  color: #0b4fc2;
+}
+.status-shipped {
+  background: #fff1d6;
+  color: #93500a;
+}
+.status-delivered {
+  background: #d9f4e4;
+  color: #067647;
+}
+.status-cancelled {
+  background: #ececec;
+  color: #5f6b7a;
 }
 
 dialog {
@@ -376,4 +392,113 @@ button.wide {
 .stock.out {
   color: var(--danger);
   font-weight: 600;
+}
+
+/* orders and admin */
+.panel.wide {
+  width: min(760px, 100%);
+}
+.chips.filter {
+  margin: 12px 0;
+}
+.order {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 0 0 12px;
+  display: grid;
+  gap: 6px;
+}
+.order-head,
+.order-item,
+.order-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.order-meta {
+  color: var(--muted);
+}
+.order-item {
+  font-size: 14px;
+}
+.order-foot {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  flex-wrap: wrap;
+}
+.actions {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin: 12px 0 0;
+}
+.tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  padding: 8px 14px;
+}
+.tab.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.admin-form input {
+  width: 100%;
+}
+.admin-form .row input {
+  flex: 1;
+  min-width: 0;
+}
+.search-admin {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.search-admin input {
+  flex: 1;
+  min-width: 0;
+}
+.prod-row {
+  display: grid;
+  grid-template-columns: 1fr 96px 80px auto;
+  gap: 8px 12px;
+  align-items: end;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.prod-row small {
+  display: block;
+  color: var(--muted);
+  text-transform: capitalize;
+}
+.prod-row label {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.prod-row input {
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 560px) {
+  .prod-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .prod-info,
+  .prod-row .actions {
+    grid-column: 1 / -1;
+  }
+}
+.tabs + .admin-form {
+  margin-top: 16px;
 }
