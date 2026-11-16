@@ -59,6 +59,34 @@ function notify(text, isError = false) {
   const msg = $('msg');
   msg.textContent = text;
   msg.className = isError ? 'msg error' : 'msg';
+  // The side panel covers this message, so when it is open show the text there as well.
+  if (text && !$('panel').hidden) {
+    $('panel-body').querySelector('.loading')?.remove();
+    panelNotify(text, isError);
+  }
+}
+
+// ---------- theme ----------
+
+// Light or dark follows the system setting until the visitor picks one with the button.
+function savedTheme() {
+  try {
+    return localStorage.getItem('theme');
+  } catch {
+    return null; // storage blocked (private mode): fall back to the system setting
+  }
+}
+
+function currentTheme() {
+  const saved = savedTheme();
+  if (saved === 'light' || saved === 'dark') return saved;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $('theme-btn').textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+  $('theme-btn').setAttribute('aria-pressed', String(theme === 'dark'));
 }
 
 // ---------- session ----------
@@ -137,14 +165,41 @@ async function loadProducts() {
   if (state.category) params.set('category', state.category);
   if (state.inStock) params.set('inStock', 'true');
   syncUrl(q);
+  const grid = $('products');
+  if (!grid.children.length) grid.replaceChildren(...skeletonCards());
+  grid.setAttribute('aria-busy', 'true');
   try {
     const data = await api(`/products?${params}`);
     renderProducts(data);
     $('count').textContent = data.total === 1 ? '1 product' : `${data.total} products`;
     notify(data.total === 0 ? 'No products found. Try a different search or filter.' : '');
   } catch (err) {
+    grid.replaceChildren();
     notify(err.message, true);
+  } finally {
+    grid.removeAttribute('aria-busy');
   }
+}
+
+// The same category always gets the same one of eight tints, so the grid is easy to scan.
+function hueClass(category) {
+  let sum = 0;
+  for (const char of String(category)) sum += char.charCodeAt(0);
+  return `hue-${sum % 8}`;
+}
+
+// Placeholder cards shown while the first page of products loads.
+function skeletonCards(count = 6) {
+  return Array.from({ length: count }, () =>
+    el(
+      'article',
+      { class: 'card skeleton', 'aria-hidden': 'true' },
+      el('div', { class: 'sk sk-thumb' }),
+      el('div', { class: 'sk sk-line' }),
+      el('div', { class: 'sk sk-line short' }),
+      el('div', { class: 'sk sk-btn' })
+    )
+  );
 }
 
 // "Out of stock", "Only 3 left" (urgency, at or below LOW_STOCK) or "In stock".
@@ -161,7 +216,7 @@ function renderProducts({ items, page, pages }) {
       el(
         'article',
         { class: 'card' },
-        el('div', { class: 'thumb', 'aria-hidden': 'true' }, p.name.slice(0, 2).toUpperCase()),
+        el('div', { class: `thumb ${hueClass(p.category)}`, 'aria-hidden': 'true' }, p.name.slice(0, 2).toUpperCase()),
         el('span', { class: 'tag' }, p.category),
         el('h3', {}, p.name),
         el('p', {}, p.description),
@@ -169,7 +224,7 @@ function renderProducts({ items, page, pages }) {
         stockBadge(p.stock),
         el(
           'button',
-          { class: 'primary', ...(p.stock > 0 ? {} : { disabled: '' }), onclick: () => addToCart(p._id) },
+          { class: 'primary', ...(p.stock > 0 ? {} : { disabled: '' }), onclick: (event) => addToCart(p._id, event.currentTarget) },
           'Add to cart'
         )
       )
@@ -199,14 +254,20 @@ function panelNotify(text, isError = false) {
   msg.className = isError ? 'msg error' : 'msg';
 }
 
-async function addToCart(productId) {
+async function addToCart(productId, button) {
   if (!state.user) return openAuth('login');
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Adding...';
   try {
     const { cart } = await api('/cart/items', { method: 'POST', body: { productId, quantity: 1 } });
     $('cart-count').textContent = cart.itemCount;
     notify('Added to cart.');
   } catch (err) {
     notify(err.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
   }
 }
 
@@ -265,10 +326,19 @@ function cartLine(line) {
   );
 }
 
+// Open the panel straight away with a placeholder, so a slow request never looks like a dead button.
+// Skipped when the same panel is already showing, so actions inside it do not flicker.
+function panelLoading(title, wide = false) {
+  if (!$('panel').hidden && $('panel-title').textContent === title) return;
+  $('panel-body').replaceChildren(el('p', { class: 'empty loading' }, 'Loading...'));
+  openPanel(title, wide);
+}
+
 // Renders the cart in the side panel. `note` is an optional { text, isError } message shown
 // at the top, used to report the result of the action that triggered the re-render.
 async function showCart(note) {
   if (!state.user) return openAuth('login');
+  panelLoading('Your cart');
   try {
     const { cart } = await api('/cart');
     const body = $('panel-body');
@@ -413,6 +483,7 @@ function orderCard(order, actions = [], customer = '') {
 }
 
 async function showOrders({ filter = 'all', note } = {}) {
+  panelLoading('Your orders');
   try {
     const { orders } = await api('/orders');
     const shown = filter === 'all' ? orders : orders.filter((o) => o.status === filter);
@@ -457,6 +528,7 @@ const ACTION_LABEL = { shipped: 'Mark shipped', delivered: 'Mark delivered', can
 // tab, filter and search are redrawn together with a result message.
 async function showAdmin(ctx = {}) {
   const view = { tab: 'orders', filter: 'all', q: '', ...ctx };
+  panelLoading('Admin', true);
   try {
     const tabs = el(
       'div',
@@ -697,8 +769,33 @@ $('instock').addEventListener('change', () => {
   loadProducts();
 });
 
+// ---------- footer version ----------
+
+// The running version comes from /health. A local run reports a full git SHA: shorten that.
+async function loadVersion() {
+  try {
+    const res = await fetch('/health');
+    const { version } = await res.json();
+    if (!version) return;
+    $('version').textContent = /^[0-9a-f]{40}$/.test(version) ? `Build ${version.slice(0, 7)}` : `Version ${version}`;
+  } catch {
+    // footer stays empty: the version is a nicety, never a reason to show an error
+  }
+}
+
 // ---------- start ----------
 
+applyTheme(currentTheme());
+$('theme-btn').addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  try {
+    localStorage.setItem('theme', next);
+  } catch {
+    // storage blocked: the choice still applies until the page is closed
+  }
+  applyTheme(next);
+});
+loadVersion();
 renderNav();
 $('q').value = initial.get('q') || '';
 $('sort').value = state.sort;

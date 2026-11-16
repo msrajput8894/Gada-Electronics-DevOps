@@ -8,6 +8,7 @@ const User = require('../models/User');
 const { HttpError, asyncHandler } = require('../errors');
 const { authenticate } = require('../middleware/auth');
 const { isEmail } = require('../validate');
+const { business } = require('../metrics');
 
 const router = express.Router();
 
@@ -42,6 +43,7 @@ router.post(
     const passwordHash = await bcrypt.hash(password, config.bcryptRounds);
     // The role is never taken from the request body, so nobody can register as an admin.
     const user = await User.create({ name, email, passwordHash });
+    business.registrations.inc();
     res.status(201).json({ token: signToken(user), user: publicUser(user) });
   })
 );
@@ -56,8 +58,10 @@ router.post(
     const user = await User.findOne({ email: email.trim().toLowerCase() });
     // Same message for unknown email and wrong password, so accounts cannot be enumerated.
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+      business.loginAttempts.inc({ result: 'failure' });
       throw new HttpError(401, 'Invalid email or password');
     }
+    business.loginAttempts.inc({ result: 'success' });
     res.json({ token: signToken(user), user: publicUser(user) });
   })
 );
