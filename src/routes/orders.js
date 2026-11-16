@@ -7,6 +7,7 @@ const Product = require('../models/Product');
 const { HttpError, asyncHandler } = require('../errors');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { str, requireObjectId } = require('../validate');
+const { business } = require('../metrics');
 
 const router = express.Router();
 router.use(authenticate);
@@ -33,8 +34,12 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const cart = await Cart.findOne({ user: req.user.id }).populate('items.product');
-    if (!cart || cart.items.length === 0) throw new HttpError(400, 'Your cart is empty');
+    if (!cart || cart.items.length === 0) {
+      business.checkoutFailures.inc({ reason: 'empty_cart' });
+      throw new HttpError(400, 'Your cart is empty');
+    }
     if (cart.items.some((item) => !item.product)) {
+      business.checkoutFailures.inc({ reason: 'product_unavailable' });
       throw new HttpError(409, 'A product in your cart is no longer available');
     }
 
@@ -62,9 +67,13 @@ router.post(
 
       cart.items = [];
       await cart.save();
+      business.ordersPlaced.inc();
+      business.orderRevenue.inc(total);
       res.status(201).json({ order });
     } catch (err) {
       await restoreStock(reserved);
+      // 409 here means somebody else took the stock first; anything else is an unexpected fault.
+      business.checkoutFailures.inc({ reason: err instanceof HttpError && err.status === 409 ? 'out_of_stock' : 'error' });
       throw err;
     }
   })
@@ -113,6 +122,7 @@ router.post(
     const updated = await Order.findOneAndUpdate({ _id: id, status: 'placed' }, { status: 'cancelled' }, { new: true });
     if (!updated) throw new HttpError(409, 'Order was changed by someone else, reload and retry');
     await restoreStock(order.items);
+    business.ordersCancelled.inc({ by: 'customer' });
     res.json({ order: updated });
   })
 );
@@ -136,7 +146,10 @@ router.patch(
       { new: true }
     );
     if (!updated) throw new HttpError(409, 'Order was changed by someone else, reload and retry');
-    if (next === 'cancelled') await restoreStock(order.items);
+    if (next === 'cancelled') {
+      await restoreStock(order.items);
+      business.ordersCancelled.inc({ by: 'admin' });
+    }
     res.json({ order: updated });
   })
 );

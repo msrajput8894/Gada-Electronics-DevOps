@@ -6,6 +6,7 @@ const db = require('./db');
 const { createApp } = require('../src/app');
 const User = require('../src/models/User');
 const Product = require('../src/models/Product');
+const metrics = require('../src/metrics');
 
 const app = createApp();
 const PASSWORD = 'Passw0rd!';
@@ -329,5 +330,68 @@ describe('orders', () => {
 
     const mine = await request(app).get('/api/orders').set(auth(asha.token));
     expect(typeof mine.body.orders[0].user).toBe('string'); // just an id
+  });
+});
+
+describe('business metrics', () => {
+  // Counters only ever go up and are shared by every test in this file, so compare before and after.
+  async function metric(name, labels = '') {
+    const text = await metrics.register.metrics();
+    const pattern = new RegExp(`^${name}${labels.replace(/[{}]/g, '\\$&')} (\\S+)$`, 'm');
+    const match = text.match(pattern);
+    return match ? Number(match[1]) : 0;
+  }
+
+  test('orders, revenue, cancellations, failed checkouts and logins are counted', async () => {
+    const before = {
+      placed: await metric('gada_orders_placed_total'),
+      revenue: await metric('gada_order_revenue_inr_total'),
+      cancelled: await metric('gada_orders_cancelled_total', '{by="customer"}'),
+      outOfStock: await metric('gada_checkout_failures_total', '{reason="out_of_stock"}'),
+      emptyCart: await metric('gada_checkout_failures_total', '{reason="empty_cart"}'),
+      badLogins: await metric('gada_login_attempts_total', '{result="failure"}'),
+      goodLogins: await metric('gada_login_attempts_total', '{result="success"}'),
+      signups: await metric('gada_registrations_total'),
+    };
+
+    const { token } = await register('meter@example.com', 'Meter');
+    expect(await metric('gada_registrations_total')).toBe(before.signups + 1);
+
+    const product = await makeProduct({ price: 500, stock: 5 });
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 2 });
+    const order = (await request(app).post('/api/orders').set(auth(token))).body.order;
+    expect(await metric('gada_orders_placed_total')).toBe(before.placed + 1);
+    expect(await metric('gada_order_revenue_inr_total')).toBe(before.revenue + 1000);
+
+    await request(app).post(`/api/orders/${order._id}/cancel`).set(auth(token));
+    expect(await metric('gada_orders_cancelled_total', '{by="customer"}')).toBe(before.cancelled + 1);
+
+    // Empty cart, then stock taken by someone else after the item was added to the cart.
+    await request(app).post('/api/orders').set(auth(token));
+    expect(await metric('gada_checkout_failures_total', '{reason="empty_cart"}')).toBe(before.emptyCart + 1);
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 2 });
+    await Product.updateOne({ _id: product.id }, { stock: 0 });
+    expect((await request(app).post('/api/orders').set(auth(token))).status).toBe(409);
+    expect(await metric('gada_checkout_failures_total', '{reason="out_of_stock"}')).toBe(before.outOfStock + 1);
+    // A failed checkout is not an order.
+    expect(await metric('gada_orders_placed_total')).toBe(before.placed + 1);
+
+    await request(app).post('/api/auth/login').send({ email: 'meter@example.com', password: 'wrong-password' });
+    await request(app).post('/api/auth/login').send({ email: 'meter@example.com', password: PASSWORD });
+    expect(await metric('gada_login_attempts_total', '{result="failure"}')).toBe(before.badLogins + 1);
+    expect(await metric('gada_login_attempts_total', '{result="success"}')).toBe(before.goodLogins + 1);
+  });
+
+  test('every counter series exists from the start, so rate() works before the first event', async () => {
+    const text = await metrics.register.metrics();
+    for (const line of [
+      'gada_orders_placed_total',
+      'gada_checkout_failures_total{reason="out_of_stock"}',
+      'gada_checkout_failures_total{reason="error"}',
+      'gada_orders_cancelled_total{by="admin"}',
+      'gada_login_attempts_total{result="failure"}',
+    ]) {
+      expect(text).toContain(line);
+    }
   });
 });

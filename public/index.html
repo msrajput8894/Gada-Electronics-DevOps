@@ -20,6 +20,7 @@
     </form>
     <nav class="nav">
       <span id="who"></span>
+      <button id="theme-btn" type="button" aria-pressed="false">Dark mode</button>
       <button id="auth-btn" type="button">Log in</button>
       <button id="orders-btn" type="button" hidden>Orders</button>
       <button id="admin-btn" type="button" hidden>Admin</button>
@@ -37,6 +38,11 @@
     <section id="products" class="grid" aria-label="Products"></section>
     <div id="pager" class="pager"></div>
   </main>
+
+  <footer class="foot">
+    <span>Gada Electronics demo store</span>
+    <span id="version" title="Running version of this app"></span>
+  </footer>
 
   <aside id="panel" class="panel" hidden>
     <div class="panel-head">
