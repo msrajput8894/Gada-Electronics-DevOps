@@ -1,7 +1,6 @@
 'use strict';
 
 const express = require('express');
-const Cart = require('../models/Cart');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const { HttpError, asyncHandler } = require('../errors');
@@ -26,58 +25,6 @@ const restoreStock = (items) =>
       Product.updateOne({ _id: item.product }, { $inc: { stock: item.quantity } })
     )
   );
-
-// Checkout: turn the cart into an order.
-// A standalone MongoDB has no multi-document transactions, so stock is reserved with an
-// atomic conditional update per product, and undone if any later step fails.
-router.post(
-  '/',
-  asyncHandler(async (req, res) => {
-    const cart = await Cart.findOne({ user: req.user.id }).populate('items.product');
-    if (!cart || cart.items.length === 0) {
-      business.checkoutFailures.inc({ reason: 'empty_cart' });
-      throw new HttpError(400, 'Your cart is empty');
-    }
-    if (cart.items.some((item) => !item.product)) {
-      business.checkoutFailures.inc({ reason: 'product_unavailable' });
-      throw new HttpError(409, 'A product in your cart is no longer available');
-    }
-
-    const reserved = [];
-    try {
-      for (const item of cart.items) {
-        const updated = await Product.findOneAndUpdate(
-          { _id: item.product._id, stock: { $gte: item.quantity } },
-          { $inc: { stock: -item.quantity } }
-        );
-        if (!updated) {
-          throw new HttpError(409, `Not enough stock for ${item.product.name}`);
-        }
-        reserved.push({ product: item.product._id, quantity: item.quantity });
-      }
-
-      const items = cart.items.map((item) => ({
-        product: item.product._id,
-        name: item.product.name,
-        price: item.product.price,
-        quantity: item.quantity,
-      }));
-      const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-      const order = await Order.create({ user: req.user.id, items, total });
-
-      cart.items = [];
-      await cart.save();
-      business.ordersPlaced.inc();
-      business.orderRevenue.inc(total);
-      res.status(201).json({ order });
-    } catch (err) {
-      await restoreStock(reserved);
-      // 409 here means somebody else took the stock first; anything else is an unexpected fault.
-      business.checkoutFailures.inc({ reason: err instanceof HttpError && err.status === 409 ? 'out_of_stock' : 'error' });
-      throw err;
-    }
-  })
-);
 
 router.get(
   '/',

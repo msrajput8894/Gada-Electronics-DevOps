@@ -18,6 +18,9 @@ function createApp() {
       contentSecurityPolicy: {
         directives: {
           ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+          'script-src': ["'self'", 'https://checkout.razorpay.com'],
+          'frame-src': ["'self'", 'https://api.razorpay.com', 'https://checkout.razorpay.com'],
+          'connect-src': ["'self'", 'https://api.razorpay.com'],
           // Helmet's default would force https for assets, which breaks plain-HTTP test servers
           // (for example an EC2 instance before TLS is set up). Remove once HTTPS is in place.
           'upgrade-insecure-requests': null,
@@ -33,6 +36,7 @@ function createApp() {
   app.use('/api/auth', require('./routes/auth'));
   app.use('/api/products', require('./routes/products'));
   app.use('/api/cart', require('./routes/cart'));
+  app.use('/api/payments', require('./routes/payments'));
   app.use('/api/orders', require('./routes/orders'));
   app.use('/api', notFound);
 

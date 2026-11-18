@@ -359,7 +359,7 @@ async function showCart(note) {
           el(
             'button',
             { id: 'checkout-btn', type: 'button', class: 'primary wide', ...(blocked ? { disabled: '' } : {}), onclick: checkout },
-            'Place order'
+            'Pay securely'
           ),
           blocked ? el('p', { class: 'error' }, 'Fix the highlighted items before placing your order.') : '',
           el(
@@ -404,18 +404,53 @@ const clearCart = () => cartAction(() => api('/cart', { method: 'DELETE' }), 'Ca
 
 async function checkout() {
   if (busy) return;
+  if (!window.Razorpay) {
+    return showCart({ text: 'Payment checkout could not be loaded. Check your connection and try again.', isError: true });
+  }
   busy = true;
   const button = $('checkout-btn');
   button.disabled = true;
-  button.textContent = 'Placing order...';
+  button.textContent = 'Starting secure checkout...';
   try {
-    const { order } = await api('/orders', { method: 'POST' });
-    busy = false;
-    await Promise.all([loadProducts(), refreshCartCount()]);
-    showOrderPlaced(order);
+    const { payment } = await api('/payments/order', { method: 'POST' });
+    let finished = false;
+    const checkout = new window.Razorpay({
+      key: payment.keyId,
+      amount: payment.amount,
+      currency: payment.currency,
+      name: 'Gada Electronics',
+      description: 'Purchase from Gada Electronics',
+      order_id: payment.orderId,
+      prefill: { name: state.user.name, email: state.user.email },
+      handler: async (response) => {
+        try {
+          const { order } = await api('/payments/verify', { method: 'POST', body: response });
+          finished = true;
+          busy = false;
+          await Promise.all([loadProducts(), refreshCartCount()]);
+          showOrderPlaced(order);
+        } catch (err) {
+          finished = true;
+          busy = false;
+          await showCart({ text: err.message, isError: true });
+          await loadProducts();
+        }
+      },
+      modal: {
+        ondismiss: async () => {
+          if (finished) return;
+          finished = true;
+          busy = false;
+          await showCart({ text: 'Checkout closed. Your cart is unchanged.', isError: false });
+        },
+      },
+    });
+    checkout.on('payment.failed', (event) => {
+      panelNotify(event.error?.description || 'Payment failed. You can try again.');
+    });
+    checkout.open();
   } catch (err) {
     busy = false;
-    // Stock may have changed since the cart was drawn: redraw it and explain.
     await showCart({ text: err.message, isError: true });
     await loadProducts();
   }

@@ -3,9 +3,16 @@
 const request = require('supertest');
 const bcrypt = require('bcryptjs');
 const db = require('./db');
+jest.mock('../src/paymentProvider', () => ({
+  createOrder: jest.fn(),
+  fetchPayment: jest.fn(),
+  verifyCheckoutSignature: jest.fn(),
+}));
+const paymentProvider = require('../src/paymentProvider');
 const { createApp } = require('../src/app');
 const User = require('../src/models/User');
 const Product = require('../src/models/Product');
+const Order = require('../src/models/Order');
 const metrics = require('../src/metrics');
 
 const app = createApp();
@@ -34,6 +41,17 @@ async function adminToken() {
 const auth = (token) => ({ Authorization: `Bearer ${token}` });
 const makeProduct = (overrides = {}) =>
   Product.create({ name: 'Gada Buds', category: 'audio', price: 1000, stock: 5, ...overrides });
+
+let nextProviderOrder = 0;
+beforeEach(() => {
+  paymentProvider.createOrder.mockImplementation(async (amount) => ({
+    id: `order_test_${++nextProviderOrder}`,
+    amount,
+    currency: 'INR',
+  }));
+  paymentProvider.fetchPayment.mockReset();
+  paymentProvider.verifyCheckoutSignature.mockReturnValue(true);
+});
 
 describe('health', () => {
   test('GET /health reports the process is alive', async () => {
@@ -202,45 +220,126 @@ describe('cart and checkout', () => {
     expect(tooMany.status).toBe(400);
   });
 
-  test('checkout creates an order, reduces stock and empties the cart', async () => {
+  async function startPayment(token) {
+    return request(app).post('/api/payments/order').set(auth(token));
+  }
+
+  async function confirmPayment(token, payment, overrides = {}) {
+    const body = {
+      razorpay_order_id: payment.body.payment.orderId,
+      razorpay_payment_id: 'pay_test_1',
+      razorpay_signature: 'test-signature',
+      ...overrides,
+    };
+    paymentProvider.fetchPayment.mockResolvedValueOnce({
+      id: body.razorpay_payment_id,
+      order_id: body.razorpay_order_id,
+      status: 'captured',
+    });
+    return request(app).post('/api/payments/verify').set(auth(token)).send(body);
+  }
+
+  test('checkout verifies a captured payment before creating the order', async () => {
     const { token } = await register();
     const product = await makeProduct({ price: 1000, stock: 5 });
     await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 2 });
 
-    const res = await request(app).post('/api/orders').set(auth(token));
+    const payment = await startPayment(token);
+    expect(payment.status).toBe(201);
+    expect(payment.body.payment).toMatchObject({ amount: 200000, currency: 'INR' });
+    expect((await Product.findById(product.id)).stock).toBe(5);
+
+    const res = await confirmPayment(token, payment);
     expect(res.status).toBe(201);
     expect(res.body.order.total).toBe(2000);
     expect(res.body.order.status).toBe('placed');
+    expect(res.body.order.payment).toMatchObject({ provider: 'razorpay', paymentId: 'pay_test_1', status: 'captured' });
 
     expect((await Product.findById(product.id)).stock).toBe(3);
     const cart = await request(app).get('/api/cart').set(auth(token));
     expect(cart.body.cart.items).toHaveLength(0);
 
-    const again = await request(app).post('/api/orders').set(auth(token));
-    expect(again.status).toBe(400);
+    const duplicate = await confirmPayment(token, payment);
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.order._id).toBe(res.body.order._id);
+    expect((await Product.findById(product.id)).stock).toBe(3);
   });
 
-  test('a failed checkout puts reserved stock back', async () => {
+  test('does not place an order when Razorpay reports an uncaptured payment', async () => {
     const { token } = await register();
-    const plenty = await makeProduct({ name: 'Plenty', stock: 5 });
-    const scarce = await makeProduct({ name: 'Scarce', stock: 2 });
-    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: plenty.id, quantity: 2 });
-    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: scarce.id, quantity: 2 });
+    const product = await makeProduct();
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 1 });
+    const payment = await startPayment(token);
+    paymentProvider.fetchPayment.mockResolvedValueOnce({
+      id: 'pay_test_1',
+      order_id: payment.body.payment.orderId,
+      status: 'authorized',
+    });
 
-    // Someone else buys the scarce item after it was added to this cart.
-    await Product.updateOne({ _id: scarce.id }, { stock: 1 });
-
-    const res = await request(app).post('/api/orders').set(auth(token));
+    const res = await request(app)
+      .post('/api/payments/verify')
+      .set(auth(token))
+      .send({
+        razorpay_order_id: payment.body.payment.orderId,
+        razorpay_payment_id: 'pay_test_1',
+        razorpay_signature: 'test-signature',
+      });
     expect(res.status).toBe(409);
-    expect((await Product.findById(plenty.id)).stock).toBe(5);
-    expect((await Product.findById(scarce.id)).stock).toBe(1);
+    expect(await Order.countDocuments()).toBe(0);
+    expect((await Product.findById(product.id)).stock).toBe(5);
+  });
+
+  test('does not accept an invalid payment signature', async () => {
+    const { token } = await register();
+    const product = await makeProduct();
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 1 });
+    const payment = await startPayment(token);
+    paymentProvider.verifyCheckoutSignature.mockReturnValueOnce(false);
+
+    const res = await confirmPayment(token, payment);
+    expect(res.status).toBe(400);
+    expect(paymentProvider.fetchPayment).not.toHaveBeenCalled();
+    expect(await Order.countDocuments()).toBe(0);
+  });
+
+  test('a captured payment cannot place an order if inventory changed', async () => {
+    const { token } = await register();
+    const product = await makeProduct();
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 1 });
+    const payment = await startPayment(token);
+    await Product.updateOne({ _id: product.id }, { stock: 0 });
+
+    const res = await confirmPayment(token, payment);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('Payment was captured');
+    expect(await Order.countDocuments()).toBe(0);
+    expect((await Product.findById(product.id)).stock).toBe(0);
+  });
+
+  test('direct order creation is no longer available without payment verification', async () => {
+    const { token } = await register();
+    expect((await request(app).post('/api/orders').set(auth(token))).status).toBe(404);
   });
 });
 
 describe('orders', () => {
   async function placeOrder(token, product, quantity = 1) {
     await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity });
-    return (await request(app).post('/api/orders').set(auth(token))).body.order;
+    const payment = await request(app).post('/api/payments/order').set(auth(token));
+    paymentProvider.fetchPayment.mockResolvedValueOnce({
+      id: `pay_test_${nextProviderOrder}`,
+      order_id: payment.body.payment.orderId,
+      status: 'captured',
+    });
+    const result = await request(app)
+      .post('/api/payments/verify')
+      .set(auth(token))
+      .send({
+        razorpay_order_id: payment.body.payment.orderId,
+        razorpay_payment_id: `pay_test_${nextProviderOrder}`,
+        razorpay_signature: 'test-signature',
+      });
+    return result.body.order;
   }
 
   test('customers only see their own orders', async () => {
@@ -359,7 +458,22 @@ describe('business metrics', () => {
 
     const product = await makeProduct({ price: 500, stock: 5 });
     await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 2 });
-    const order = (await request(app).post('/api/orders').set(auth(token))).body.order;
+    const payment = await request(app).post('/api/payments/order').set(auth(token));
+    paymentProvider.fetchPayment.mockResolvedValueOnce({
+      id: 'pay_metrics',
+      order_id: payment.body.payment.orderId,
+      status: 'captured',
+    });
+    const order = (
+      await request(app)
+        .post('/api/payments/verify')
+        .set(auth(token))
+        .send({
+          razorpay_order_id: payment.body.payment.orderId,
+          razorpay_payment_id: 'pay_metrics',
+          razorpay_signature: 'test-signature',
+        })
+    ).body.order;
     expect(await metric('gada_orders_placed_total')).toBe(before.placed + 1);
     expect(await metric('gada_order_revenue_inr_total')).toBe(before.revenue + 1000);
 
@@ -367,11 +481,11 @@ describe('business metrics', () => {
     expect(await metric('gada_orders_cancelled_total', '{by="customer"}')).toBe(before.cancelled + 1);
 
     // Empty cart, then stock taken by someone else after the item was added to the cart.
-    await request(app).post('/api/orders').set(auth(token));
+    await request(app).post('/api/payments/order').set(auth(token));
     expect(await metric('gada_checkout_failures_total', '{reason="empty_cart"}')).toBe(before.emptyCart + 1);
     await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 2 });
     await Product.updateOne({ _id: product.id }, { stock: 0 });
-    expect((await request(app).post('/api/orders').set(auth(token))).status).toBe(409);
+    expect((await request(app).post('/api/payments/order').set(auth(token))).status).toBe(409);
     expect(await metric('gada_checkout_failures_total', '{reason="out_of_stock"}')).toBe(before.outOfStock + 1);
     // A failed checkout is not an order.
     expect(await metric('gada_orders_placed_total')).toBe(before.placed + 1);
