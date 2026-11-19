@@ -136,8 +136,9 @@ resource "aws_instance" "k3s" {
   }
 
   metadata_options {
-    http_endpoint = "enabled"
-    http_tokens   = "required"
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
   }
 
   user_data = <<-SCRIPT
@@ -153,4 +154,25 @@ resource "aws_instance" "k3s" {
   lifecycle {
     ignore_changes = [ami]
   }
+}
+
+resource "aws_iam_role_policy" "backups" {
+  name = "gada-backups"
+  role = aws_iam_role.k3s.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject"]
+        Resource = "arn:aws:s3:::gada-backups-660880134652/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = "arn:aws:s3:::gada-backups-660880134652"
+      }
+    ]
+  })
 }
