@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: gada-config
-  namespace: {{ .Release.Namespace }}
-data:
-  NODE_ENV: production
-  PORT: "3000"
-  ADMIN_EMAIL: {{ .Values.app.adminEmail | quote }}
