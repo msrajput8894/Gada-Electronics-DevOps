@@ -1,0 +1,18 @@
+# Accepted findings. Each has a reason and a review date; Trivy ignores an entry only until it expires.
+misconfigurations:
+  - id: AWS-0132
+    paths:
+      - infra/bootstrap/main.tf
+      - infra/envs/backups/main.tf
+    statement: "Buckets use SSE-S3 (AES256). A customer-managed KMS key adds cost and key management for little gain at this scale. Revisit if the data becomes sensitive."
+    expired_at: 2027-05-20
+  - id: AWS-0104
+    paths:
+      - infra/envs/k3s/main.tf
+    statement: "The single k3s node must reach registries, S3, SSM, Slack and the k3s installer, with no NAT or proxy in front. Cluster network policies are the planned control."
+    expired_at: 2027-05-20
+  - id: AWS-0164
+    paths:
+      - infra/envs/k3s/main.tf
+    statement: "Public subnet by design: private subnets would need a NAT gateway, deferred for cost. Security group allows only the admin IP."
+    expired_at: 2027-05-20
