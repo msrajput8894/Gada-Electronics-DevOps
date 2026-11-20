@@ -142,3 +142,26 @@ jobs:
           git commit -am "stage: deploy ${NEW_TAG} (app commit ${GITHUB_SHA})"
           git pull --rebase origin main
           git push origin HEAD:main
+
+  security:
+    name: Scan code, Terraform and Dockerfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Scan for committed secrets and misconfigurations
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          version: v0.69.3
+          severity: CRITICAL,HIGH
+          skip-dirs: node_modules,.terraform
+          format: table
+          # Report only for now. Set to "1" after the first findings are triaged.
+          exit-code: "0"
