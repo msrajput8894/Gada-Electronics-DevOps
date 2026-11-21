@@ -76,7 +76,7 @@ jobs:
         env:
           # Placeholder (documentation range) so the real admin IP never reaches CI.
           # The k3s plan will therefore show the admin_cidr rule as changed. That is expected.
-          TF_VAR_admin_cidr: "203.0.113.0/24"
+          TF_VAR_admin_cidr: "203.0.113.1/32"
         run: |
           set +e
           terraform plan -input=false -lock=false -no-color > "$RUNNER_TEMP/plan.txt" 2>&1
