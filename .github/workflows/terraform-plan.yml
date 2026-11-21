@@ -1,0 +1,109 @@
+name: Terraform plan
+
+# Shows what each infra change would do, as a comment on the pull request.
+# Read-only: it assumes a role that can only read, and it never applies anything.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: tf-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  STATE_BUCKET: gada-tfstate-660880134652
+  AWS_REGION: ap-south-1
+
+jobs:
+  plan:
+    name: plan (${{ matrix.dir }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [cicd, backups, k3s]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Jobs for folders this PR did not touch finish green straight away, so this check can be required.
+      - name: Did this PR change infra/${{ matrix.dir }}?
+        id: changed
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- "infra/envs/${{ matrix.dir }}" "infra/${{ matrix.dir }}" | grep -q .; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No changes under this folder, skipping."
+          fi
+
+      - name: Work out the folder
+        if: steps.changed.outputs.run == 'true'
+        id: dir
+        run: |
+          if [ -d "infra/envs/${{ matrix.dir }}" ]; then echo "path=infra/envs/${{ matrix.dir }}" >> "$GITHUB_OUTPUT"; else echo "path=infra/${{ matrix.dir }}" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.changed.outputs.run == 'true'
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        if: steps.changed.outputs.run == 'true'
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+
+      - name: Format, init and validate
+        if: steps.changed.outputs.run == 'true'
+        working-directory: ${{ steps.dir.outputs.path }}
+        run: |
+          terraform fmt -check -recursive
+          terraform init -input=false -backend-config="bucket=${STATE_BUCKET}"
+          terraform validate
+
+      - name: Plan
+        if: steps.changed.outputs.run == 'true'
+        id: plan
+        working-directory: ${{ steps.dir.outputs.path }}
+        env:
+          # Placeholder (documentation range) so the real admin IP never reaches CI.
+          # The k3s plan will therefore show the admin_cidr rule as changed. That is expected.
+          TF_VAR_admin_cidr: "203.0.113.0/24"
+        run: |
+          set +e
+          terraform plan -input=false -lock=false -no-color > "$RUNNER_TEMP/plan.txt" 2>&1
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/plan.txt"
+
+      - name: Comment the plan on the PR
+        if: steps.changed.outputs.run == 'true' && always()
+        uses: actions/github-script@v7
+        env:
+          DIR: ${{ matrix.dir }}
+          RC: ${{ steps.plan.outputs.rc }}
+        with:
+          script: |
+            const fs = require('fs');
+            const dir = process.env.DIR;
+            let text = '';
+            try { text = fs.readFileSync(process.env.RUNNER_TEMP + '/plan.txt', 'utf8'); } catch (e) { text = '(no plan output)'; }
+            const summary = (text.match(/^(Plan:.*|No changes\..*)$/m) || [process.env.RC === '0' ? 'Plan finished' : 'Plan FAILED'])[0];
+            const body = `<!-- tf-plan-${dir} -->\n### Terraform plan: \`${dir}\`\n**${summary}**\n\n<details><summary>Full output</summary>\n\n\`\`\`\n${text.slice(0, 55000)}\n\`\`\`\n</details>`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const mine = comments.find(c => c.body && c.body.includes(`<!-- tf-plan-${dir} -->`));
+            if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number, body });
+
+      - name: Fail if the plan failed
+        if: steps.changed.outputs.run == 'true' && steps.plan.outputs.rc != '0'
+        run: exit 1
