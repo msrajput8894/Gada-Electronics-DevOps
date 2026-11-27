@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const DeliveryAddress = require('./DeliveryAddress');
 
 const ORDER_STATUSES = ['placed', 'shipped', 'delivered', 'cancelled'];
 
@@ -19,6 +20,9 @@ const orderSchema = new mongoose.Schema(
     ],
     total: { type: Number, required: true, min: 0 },
     status: { type: String, enum: ORDER_STATUSES, default: 'placed' },
+    paymentMethod: { type: String, enum: ['cod', 'razorpay'], required: true },
+    paymentStatus: { type: String, enum: ['pending', 'paid'], required: true },
+    deliveryAddress: { type: DeliveryAddress, required: true },
     checkoutSession: { type: mongoose.Schema.Types.ObjectId, unique: true, sparse: true },
     payment: {
       provider: { type: String, enum: ['razorpay'] },

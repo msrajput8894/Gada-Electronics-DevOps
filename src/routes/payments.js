@@ -9,6 +9,7 @@ const { HttpError, asyncHandler } = require('../errors');
 const { authenticate } = require('../middleware/auth');
 const config = require('../config');
 const paymentProvider = require('../paymentProvider');
+const { requireDeliveryAddress } = require('../validate');
 const { business } = require('../metrics');
 
 const router = express.Router();
@@ -32,6 +33,7 @@ router.post(
   '/order',
   requirePaymentsEnabled,
   asyncHandler(async (req, res) => {
+    const deliveryAddress = requireDeliveryAddress((req.body || {}).deliveryAddress);
     const cart = await Cart.findOne({ user: req.user.id }).populate('items.product');
     if (!cart || cart.items.length === 0) {
       business.checkoutFailures.inc({ reason: 'empty_cart' });
@@ -64,6 +66,7 @@ router.post(
       providerOrderId: providerOrder.id,
       items,
       total,
+      deliveryAddress,
     });
     res.status(201).json({
       payment: {
@@ -152,6 +155,9 @@ router.post(
         items: claimed.items,
         total: claimed.total,
         checkoutSession: claimed._id,
+        paymentMethod: 'razorpay',
+        paymentStatus: 'paid',
+        deliveryAddress: claimed.deliveryAddress,
         payment: { provider: 'razorpay', paymentId, status: 'captured' },
       });
       await PaymentSession.updateOne(

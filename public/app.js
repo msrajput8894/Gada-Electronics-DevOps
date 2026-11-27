@@ -14,7 +14,6 @@ const state = {
   token: sessionStorage.getItem('token'),
   user: JSON.parse(sessionStorage.getItem('user') || 'null'),
   paymentsEnabled: false,
-  paymentConfigLoaded: false,
   page: Math.max(1, parseInt(initial.get('page'), 10) || 1),
   category: initial.get('category') || '',
   sort: SORT_KEYS.includes(initial.get('sort')) ? initial.get('sort') : 'newest',
@@ -228,7 +227,8 @@ function renderProducts({ items, page, pages }) {
           'button',
           { class: 'primary', ...(p.stock > 0 ? {} : { disabled: '' }), onclick: (event) => addToCart(p._id, event.currentTarget) },
           'Add to cart'
-        )
+        ),
+        el('p', { class: 'cart-notice', role: 'status', 'aria-live': 'polite' })
       )
     )
   );
@@ -258,15 +258,18 @@ function panelNotify(text, isError = false) {
 
 async function addToCart(productId, button) {
   if (!state.user) return openAuth('login');
+  const notice = button.closest('.card').querySelector('.cart-notice');
   const label = button.textContent;
   button.disabled = true;
   button.textContent = 'Adding...';
   try {
     const { cart } = await api('/cart/items', { method: 'POST', body: { productId, quantity: 1 } });
     $('cart-count').textContent = cart.itemCount;
-    notify('Added to cart.');
+    notice.className = 'cart-notice';
+    notice.textContent = 'Added to your cart.';
   } catch (err) {
-    notify(err.message, true);
+    notice.className = 'cart-notice error';
+    notice.textContent = err.message;
   } finally {
     button.disabled = false;
     button.textContent = label;
@@ -364,10 +367,10 @@ async function showCart(note) {
               id: 'checkout-btn',
               type: 'button',
               class: 'primary wide',
-              ...(blocked || !state.paymentConfigLoaded ? { disabled: '' } : {}),
-              onclick: checkout,
+              ...(blocked ? { disabled: '' } : {}),
+              onclick: showCheckout,
             },
-            state.paymentConfigLoaded ? (state.paymentsEnabled ? 'Pay securely' : 'Place order') : 'Checking checkout...'
+            'Review order'
           ),
           blocked ? el('p', { class: 'error' }, 'Fix the highlighted items before placing your order.') : '',
           el(
@@ -410,28 +413,186 @@ const removeItem = (productId) => cartAction(() => api(`/cart/items/${productId}
 
 const clearCart = () => cartAction(() => api('/cart', { method: 'DELETE' }), 'Cart cleared.');
 
-async function checkout() {
-  if (busy) return;
-  if (!state.paymentConfigLoaded) {
-    return showCart({ text: 'Checkout settings are still loading. Please try again.', isError: true });
-  }
-  if (state.paymentsEnabled && !window.Razorpay) {
-    return showCart({ text: 'Payment checkout could not be loaded. Check your connection and try again.', isError: true });
-  }
-  busy = true;
-  const button = $('checkout-btn');
-  button.disabled = true;
-  button.textContent = state.paymentsEnabled ? 'Starting secure checkout...' : 'Placing order...';
+function addressText(address) {
+  if (!address) return '';
+  return [
+    address.fullName,
+    address.phone,
+    address.addressLine1,
+    address.addressLine2,
+    [address.city, address.state, address.postalCode].filter(Boolean).join(', '),
+    address.country,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+async function showCheckout({ address = {}, note = '', noteIsError = false } = {}) {
+  if (!state.user) return openAuth('login');
+  panelLoading('Checkout', true);
   try {
-    if (!state.paymentsEnabled) {
-      const { order } = await api('/orders', { method: 'POST' });
+    const { cart } = await api('/cart');
+    if (!cart.items.length) return showCart({ text: 'Your cart is empty.', isError: true });
+
+    const field = (name, label, value, options = {}) =>
+      el(
+        'label',
+        { class: 'checkout-field' },
+        label,
+        el('input', {
+          name,
+          value: value || '',
+          maxlength: String(options.maxlength || 200),
+          autocomplete: options.autocomplete,
+          ...(options.required === false ? {} : { required: '' }),
+          ...(options.type ? { type: options.type } : {}),
+          ...(options.pattern ? { pattern: options.pattern } : {}),
+          ...(options.inputmode ? { inputmode: options.inputmode } : {}),
+          ...(options.title ? { title: options.title } : {}),
+        })
+      );
+
+    const paymentOptions = [
+      el(
+        'label',
+        { class: 'payment-option' },
+        el('input', { type: 'radio', name: 'paymentMethod', value: 'cod', checked: '', required: '' }),
+        el('span', {}, el('strong', {}, 'Cash on delivery'), el('small', {}, 'Pay in cash when your order arrives'))
+      ),
+    ];
+    if (state.paymentsEnabled && window.Razorpay) {
+      paymentOptions.push(
+        el(
+          'label',
+          { class: 'payment-option' },
+          el('input', { type: 'radio', name: 'paymentMethod', value: 'razorpay', required: '' }),
+          el('span', {}, el('strong', {}, 'Pay online'), el('small', {}, 'Secure checkout with Razorpay'))
+        )
+      );
+    }
+
+    const form = el(
+      'form',
+      { class: 'checkout-form', onsubmit: completeCheckout },
+      el(
+        'section',
+        { class: 'checkout-section' },
+        el('h3', {}, 'Delivery address'),
+        field('fullName', 'Recipient name', address.fullName || state.user.name, {
+          autocomplete: 'name',
+          maxlength: 100,
+        }),
+        field('phone', 'Mobile number', address.phone, {
+          type: 'tel',
+          autocomplete: 'tel',
+          pattern: '(?:\\+91[ -]?)?[6-9][0-9]{9}',
+          title: 'Enter a 10-digit Indian mobile number, optionally prefixed with +91',
+          maxlength: 14,
+        }),
+        field('addressLine1', 'Address line 1', address.addressLine1, {
+          autocomplete: 'shipping address-line1',
+        }),
+        field('addressLine2', 'Address line 2 (optional)', address.addressLine2, {
+          autocomplete: 'shipping address-line2',
+          maxlength: 200,
+          required: false,
+        }),
+        el(
+          'div',
+          { class: 'checkout-row' },
+          field('city', 'City', address.city, { autocomplete: 'shipping address-level2', maxlength: 100 }),
+          field('state', 'State', address.state, { autocomplete: 'shipping address-level1', maxlength: 100 })
+        ),
+        field('postalCode', 'PIN code', address.postalCode, {
+          autocomplete: 'shipping postal-code',
+          inputmode: 'numeric',
+          pattern: '[1-9][0-9]{5}',
+          title: 'Enter a valid 6-digit Indian PIN code',
+          maxlength: 6,
+        }),
+        el('small', { class: 'checkout-country' }, 'Delivery country: India')
+      ),
+      el(
+        'fieldset',
+        { class: 'checkout-section payment-methods' },
+        el('legend', {}, 'Payment method'),
+        ...paymentOptions
+      ),
+      el(
+        'section',
+        { class: 'checkout-section checkout-review' },
+        el('h3', {}, 'Review your order'),
+        ...cart.items.map((line) =>
+          el(
+            'div',
+            { class: 'checkout-item' },
+            el('span', {}, `${line.quantity} × ${line.product.name}`),
+            el('strong', {}, money.format(line.lineTotal))
+          )
+        ),
+        el('div', { class: 'checkout-total' }, el('span', {}, 'Total'), el('strong', {}, money.format(cart.total)))
+      ),
+      el(
+        'div',
+        { class: 'row checkout-actions' },
+        el('button', { type: 'button', class: 'link', onclick: () => showCart() }, 'Back to cart'),
+        el('button', { type: 'submit', class: 'primary' }, 'Place COD order')
+      )
+    );
+    form.querySelectorAll('input[name="paymentMethod"]').forEach((input) => {
+      input.addEventListener('change', () => {
+        if (input.checked) {
+          form.querySelector('[type="submit"]').textContent =
+            input.value === 'cod' ? 'Place COD order' : 'Continue to payment';
+        }
+      });
+    });
+
+    $('panel-body').replaceChildren(form);
+    openPanel('Checkout', true);
+    if (note) panelNotify(note, noteIsError);
+  } catch (err) {
+    notify(err.message, true);
+  }
+}
+
+async function completeCheckout(event) {
+  event.preventDefault();
+  if (busy) return;
+
+  const form = event.currentTarget;
+  const values = new FormData(form);
+  const deliveryAddress = {
+    fullName: values.get('fullName'),
+    phone: values.get('phone'),
+    addressLine1: values.get('addressLine1'),
+    addressLine2: values.get('addressLine2'),
+    city: values.get('city'),
+    state: values.get('state'),
+    postalCode: values.get('postalCode'),
+  };
+  const paymentMethod = values.get('paymentMethod');
+  const submit = form.querySelector('[type="submit"]');
+  busy = true;
+  submit.disabled = true;
+  submit.textContent = paymentMethod === 'cod' ? 'Placing COD order...' : 'Starting secure checkout...';
+
+  try {
+    if (paymentMethod === 'cod') {
+      const { order } = await api('/orders', {
+        method: 'POST',
+        body: { paymentMethod, deliveryAddress },
+      });
       busy = false;
       await Promise.all([loadProducts(), refreshCartCount()]);
       showOrderPlaced(order);
       return;
     }
 
-    const { payment } = await api('/payments/order', { method: 'POST' });
+    if (!state.paymentsEnabled || !window.Razorpay) {
+      throw new Error('Online payment is unavailable. Select cash on delivery or try again later.');
+    }
+    const { payment } = await api('/payments/order', { method: 'POST', body: { deliveryAddress } });
     let finished = false;
     const checkout = new window.Razorpay({
       key: payment.keyId,
@@ -451,7 +612,7 @@ async function checkout() {
         } catch (err) {
           finished = true;
           busy = false;
-          await showCart({ text: err.message, isError: true });
+          showPaymentIssue(err.message);
           await loadProducts();
         }
       },
@@ -460,27 +621,37 @@ async function checkout() {
           if (finished) return;
           finished = true;
           busy = false;
-          await showCart({ text: 'Checkout closed. Your cart is unchanged.', isError: false });
+          await showCheckout({ address: deliveryAddress, note: 'Checkout closed. Your cart is unchanged.' });
         },
       },
     });
-    checkout.on('payment.failed', (event) => {
-      panelNotify(event.error?.description || 'Payment failed. You can try again.');
+    checkout.on('payment.failed', (paymentEvent) => {
+      panelNotify(paymentEvent.error?.description || 'Payment failed. You can try again.');
     });
     checkout.open();
   } catch (err) {
     busy = false;
-    await showCart({ text: err.message, isError: true });
-    await loadProducts();
+    await showCheckout({ address: deliveryAddress, note: err.message, noteIsError: true });
   }
 }
 
-async function loadPaymentConfig() {
-  const { enabled } = await api('/payments/config');
-  state.paymentsEnabled = enabled;
-  state.paymentConfigLoaded = true;
+function showPaymentIssue(message) {
+  $('panel-body').replaceChildren(
+    el('p', { class: 'error' }, message),
+    el('p', {}, 'If you were charged, please contact the store before trying checkout again.'),
+    el(
+      'div',
+      { class: 'row' },
+      el('button', { type: 'button', onclick: () => showOrders() }, 'Check my orders'),
+      el('button', { type: 'button', class: 'link', onclick: closePanel }, 'Close')
+    )
+  );
+  openPanel('Payment needs attention', true);
+}
 
+async function loadPaymentConfig() {
   try {
+    const { enabled } = await api('/payments/config');
     if (enabled) {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');
@@ -491,6 +662,10 @@ async function loadPaymentConfig() {
         document.head.append(script);
       });
     }
+    state.paymentsEnabled = enabled;
+  } catch (err) {
+    state.paymentsEnabled = false;
+    notify(`Online payment setup failed. Cash on delivery is still available. ${err.message}`, true);
   } finally {
     if (!$('panel').hidden && $('panel-title').textContent === 'Your cart') {
       await showCart();
@@ -502,6 +677,8 @@ function showOrderPlaced(order) {
   $('panel-body').replaceChildren(
     el('p', { class: 'confirm' }, 'Thank you! Your order has been placed.'),
     el('p', {}, `Order ${order._id.slice(-6)}`),
+    el('p', { class: 'order-meta' }, `Payment: ${paymentLabel(order)}`),
+    el('p', { class: 'order-address' }, `Delivering to: ${addressText(order.deliveryAddress)}`),
     ...order.items.map((item) =>
       el('div', { class: 'line' }, el('span', {}, `${item.quantity} x ${item.name}`), el('strong', {}, money.format(item.price * item.quantity)))
     ),
@@ -522,6 +699,14 @@ const STATUS_LABEL = { placed: 'Placed', shipped: 'Shipped', delivered: 'Deliver
 const dateTime = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 
 const statusBadge = (status) => el('span', { class: `status status-${status}` }, STATUS_LABEL[status] || status);
+
+function paymentLabel(order) {
+  if (order.paymentMethod === 'cod') {
+    return order.paymentStatus === 'paid' ? 'Cash on delivery — collected' : 'Cash on delivery — due';
+  }
+  if (order.paymentMethod === 'razorpay') return 'Paid online';
+  return 'Payment details unavailable';
+}
 
 // "All (5)  Placed (2)  Shipped (1) ..." Only statuses that exist are shown.
 function statusFilter(orders, current, onPick) {
@@ -552,6 +737,8 @@ function orderCard(order, actions = [], customer = '') {
     { class: 'order' },
     el('div', { class: 'order-head' }, el('strong', {}, `Order ${order._id.slice(-6).toUpperCase()}`), statusBadge(order.status)),
     el('small', { class: 'order-meta' }, [dateTime.format(new Date(order.createdAt)), customer].filter(Boolean).join(' · ')),
+    el('small', { class: 'order-meta' }, `Payment: ${paymentLabel(order)}`),
+    ...(order.deliveryAddress ? [el('small', { class: 'order-address' }, `Deliver to: ${addressText(order.deliveryAddress)}`)] : []),
     ...order.items.map((item) =>
       el('div', { class: 'order-item' }, el('span', {}, `${item.quantity} x ${item.name}`), el('span', {}, money.format(item.price * item.quantity)))
     ),
