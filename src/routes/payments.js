@@ -7,17 +7,30 @@ const PaymentSession = require('../models/PaymentSession');
 const Product = require('../models/Product');
 const { HttpError, asyncHandler } = require('../errors');
 const { authenticate } = require('../middleware/auth');
+const config = require('../config');
 const paymentProvider = require('../paymentProvider');
 const { business } = require('../metrics');
 
 const router = express.Router();
+router.get('/config', (_req, res) => {
+  res.json({ enabled: config.paymentsEnabled });
+});
+
 router.use(authenticate);
+
+const requirePaymentsEnabled = (_req, _res, next) => {
+  if (!config.paymentsEnabled) {
+    return next(new HttpError(503, 'Online payments are disabled'));
+  }
+  return next();
+};
 
 const restoreStock = (items) =>
   Promise.all(items.map((item) => Product.updateOne({ _id: item.product }, { $inc: { stock: item.quantity } })));
 
 router.post(
   '/order',
+  requirePaymentsEnabled,
   asyncHandler(async (req, res) => {
     const cart = await Cart.findOne({ user: req.user.id }).populate('items.product');
     if (!cart || cart.items.length === 0) {
@@ -66,6 +79,7 @@ router.post(
 
 router.post(
   '/verify',
+  requirePaymentsEnabled,
   asyncHandler(async (req, res) => {
     const {
       razorpay_order_id: providerOrderId,
@@ -83,8 +97,14 @@ router.post(
     }
 
     const providerPayment = await paymentProvider.fetchPayment(paymentId);
-    if (providerPayment.order_id !== providerOrderId || providerPayment.status !== 'captured') {
+    if (providerPayment.id !== paymentId || providerPayment.order_id !== providerOrderId) {
+      throw new HttpError(409, 'Payment does not match this checkout');
+    }
+    if (providerPayment.status !== 'captured') {
       throw new HttpError(409, 'Payment has not been captured for this checkout');
+    }
+    if (providerPayment.amount !== Math.round(session.total * 100) || providerPayment.currency !== 'INR') {
+      throw new HttpError(409, 'Captured payment amount does not match this checkout');
     }
 
     let order = await Order.findOne({ checkoutSession: session._id });

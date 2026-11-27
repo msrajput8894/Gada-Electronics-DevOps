@@ -5,7 +5,15 @@ const config = require('./config');
 const { HttpError } = require('./errors');
 
 function requireCredentials() {
-  if (!config.razorpayKeyId || !config.razorpayKeySecret) {
+  if (!config.paymentsEnabled) {
+    throw new HttpError(503, 'Online payments are disabled');
+  }
+  if (
+    !config.razorpayKeyId ||
+    !config.razorpayKeySecret ||
+    config.razorpayKeyId === 'replace_with_razorpay_test_key_id' ||
+    config.razorpayKeySecret === 'replace_with_razorpay_test_key_secret'
+  ) {
     throw new HttpError(503, 'Payment is not configured. Set Razorpay test credentials to enable checkout.');
   }
 }

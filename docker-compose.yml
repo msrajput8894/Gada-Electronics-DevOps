@@ -25,6 +25,9 @@ services:
       MONGO_URI: mongodb://mongo:27017/gada_electronics
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in the .env file}
       APP_VERSION: ${APP_VERSION:-dev}
+      PAYMENTS_ENABLED: ${PAYMENTS_ENABLED:-false}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
     depends_on:
       mongo:
         condition: service_healthy

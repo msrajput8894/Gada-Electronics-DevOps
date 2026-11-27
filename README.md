@@ -13,8 +13,8 @@ src/
   server.js          starts the app: connect to MongoDB, listen, shut down gracefully
   app.js             builds the Express app (security headers, routes, error handling)
   config.js          all configuration, read from environment variables
-  routes/            health, auth, products, cart, orders
-  models/            User, Product, Cart, Order
+  routes/            health, auth, products, cart, payments, orders
+  models/            User, Product, Cart, Order, PaymentSession
   middleware/        auth, request logging (JSON lines), error handling
   seed.js            starter products and an admin account
 public/              the storefront (plain HTML, CSS and JavaScript, no build step)
@@ -57,7 +57,8 @@ Everything comes from environment variables, so the same build runs unchanged in
 | `BCRYPT_ROUNDS` | `10` | |
 | `APP_VERSION` | `dev` | returned by `/health`; set it to the image tag or commit SHA in deployments |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | `admin@gada.local`, `ChangeMe123!` (not in production) | used by `npm run seed` |
-| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | unset | Razorpay Test Mode credentials; checkout stays disabled until configured. Enable automatic capture in the Razorpay dashboard. |
+| `PAYMENTS_ENABLED` | `false` | set to `true` to use Razorpay checkout; otherwise the demo checkout places orders without payment |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | placeholders in `.env.example` | replace with Razorpay **Test Mode** credentials before enabling payments; never commit real credentials |
 
 ## API
 
@@ -75,8 +76,10 @@ Everything comes from environment variables, so the same build runs unchanged in
 | GET | `/api/cart` | user | current cart with totals |
 | POST | `/api/cart/items` | user | add `{ productId, quantity }` |
 | PATCH, DELETE | `/api/cart/items/:productId` | user | change quantity (0 removes) or remove |
-| POST | `/api/payments/order` | user | create a Razorpay checkout for the current cart |
-| POST | `/api/payments/verify` | user | verify the Razorpay signature and captured payment, then place the order |
+| GET | `/api/payments/config` | public | report whether Razorpay checkout is enabled |
+| POST | `/api/orders` | user | place an order without payment when `PAYMENTS_ENABLED=false` |
+| POST | `/api/payments/order` | user | create a Razorpay checkout for the current cart when enabled |
+| POST | `/api/payments/verify` | user | verify the Razorpay signature and captured payment, then place the order when enabled |
 | GET | `/api/orders` | user | own orders (`?all=true` lists everyone's for admins) |
 | GET | `/api/orders/:id` | owner or admin | one order |
 | PATCH | `/api/orders/:id/status` | admin | `shipped`, `delivered` or `cancelled` |
@@ -92,8 +95,9 @@ These are the points an interviewer or a production incident will eventually ask
 - **Liveness vs readiness** (`src/routes/health.js`): `/health` says the process is alive, `/ready` says it can serve traffic. Load balancers and Kubernetes use them for different decisions.
 - **Graceful shutdown** (`src/server.js`): on SIGTERM the app stops accepting connections, finishes in-flight requests and closes the database. Docker, systemd and Kubernetes all stop containers this way.
 - **JSON logs on stdout** (`src/middleware/logger.js`): one object per line, which is what log shippers expect. Apps should not write their own log files.
-- **Checkout without transactions** (`src/routes/payments.js`): a standalone MongoDB cannot run multi-document transactions, so stock is reserved with an atomic conditional update and rolled back on failure. Compare with replica sets and transactions when you reach the database phase.
+- **Checkout without transactions** (`src/routes/orders.js`, `src/routes/payments.js`): a standalone MongoDB cannot run multi-document transactions, so stock is reserved with an atomic conditional update and rolled back on failure. Compare with replica sets and transactions when you reach the database phase.
 - **Payment confirmation** (`src/routes/payments.js`): the browser never decides whether an order is paid. The server verifies Razorpay's signature and fetches the payment status before creating an order. Start with Razorpay Test Mode keys; configure payment credentials through environment/secret management, never in source control. A payment captured after stock is taken by another customer requires manual refund handling in this learning version.
+- **Payment feature flag**: `PAYMENTS_ENABLED` defaults to `false`, preserving the simple no-payment demo checkout. To try the integration, replace the placeholder values with Razorpay Test Mode credentials, set `PAYMENTS_ENABLED=true`, and enable automatic capture in Razorpay. The placeholder credentials are not valid and cannot process payments.
 - **Helmet and plain HTTP** (`src/app.js`): the default security headers include `upgrade-insecure-requests`, which makes browsers request CSS and JavaScript over https. On a server that only speaks HTTP (an EC2 instance before TLS is set up) the page loads unstyled and broken. The app removes that directive; once nginx or a load balancer terminates TLS, you can put it back.
 - **Trusting the proxy** (`app.set('trust proxy', 1)`): behind nginx or a load balancer, the real client IP arrives in a header. This setting is what lets the app read it. Set it wrongly and every request appears to come from the proxy.
 - **Query input** (`src/validate.js`): `?q[$ne]=x` arrives as an object, not a string. The app only accepts plain strings so request input never becomes a MongoDB operator.

@@ -9,6 +9,7 @@ jest.mock('../src/paymentProvider', () => ({
   verifyCheckoutSignature: jest.fn(),
 }));
 const paymentProvider = require('../src/paymentProvider');
+const config = require('../src/config');
 const { createApp } = require('../src/app');
 const User = require('../src/models/User');
 const Product = require('../src/models/Product');
@@ -44,6 +45,7 @@ const makeProduct = (overrides = {}) =>
 
 let nextProviderOrder = 0;
 beforeEach(() => {
+  config.paymentsEnabled = false;
   paymentProvider.createOrder.mockImplementation(async (amount) => ({
     id: `order_test_${++nextProviderOrder}`,
     amount,
@@ -202,7 +204,48 @@ describe('products', () => {
   });
 });
 
+describe('payment feature flag', () => {
+  test('payments are disabled by default and the existing checkout still works', async () => {
+    expect(config.paymentsEnabled).toBe(false);
+    expect((await request(app).get('/api/payments/config')).body.enabled).toBe(false);
+
+    const { token } = await register();
+    const product = await makeProduct({ stock: 5 });
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 2 });
+    paymentProvider.createOrder.mockClear();
+
+    expect((await request(app).post('/api/payments/order').set(auth(token))).status).toBe(503);
+    expect((await request(app).post('/api/payments/verify').set(auth(token))).status).toBe(503);
+    expect(paymentProvider.createOrder).not.toHaveBeenCalled();
+
+    const checkout = await request(app).post('/api/orders').set(auth(token));
+    expect(checkout.status).toBe(201);
+    expect(checkout.body.order.total).toBe(2000);
+    expect((await Product.findById(product.id)).stock).toBe(3);
+    expect((await request(app).get('/api/cart').set(auth(token))).body.cart.items).toHaveLength(0);
+  });
+
+  test('failed demo checkout restores stock reserved earlier in the cart', async () => {
+    const { token } = await register();
+    const available = await makeProduct({ name: 'Available', stock: 5 });
+    const scarce = await makeProduct({ name: 'Scarce', stock: 1 });
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: available.id, quantity: 2 });
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: scarce.id, quantity: 1 });
+    await Product.updateOne({ _id: scarce.id }, { stock: 0 });
+
+    const checkout = await request(app).post('/api/orders').set(auth(token));
+    expect(checkout.status).toBe(409);
+    expect((await Product.findById(available.id)).stock).toBe(5);
+    expect((await Product.findById(scarce.id)).stock).toBe(0);
+    expect((await request(app).get('/api/cart').set(auth(token))).body.cart.items).toHaveLength(2);
+  });
+});
+
 describe('cart and checkout', () => {
+  beforeEach(() => {
+    config.paymentsEnabled = true;
+  });
+
   test('cart requires authentication', async () => {
     expect((await request(app).get('/api/cart')).status).toBe(401);
   });
@@ -235,6 +278,8 @@ describe('cart and checkout', () => {
       id: body.razorpay_payment_id,
       order_id: body.razorpay_order_id,
       status: 'captured',
+      amount: payment.body.payment.amount,
+      currency: payment.body.payment.currency,
     });
     return request(app).post('/api/payments/verify').set(auth(token)).send(body);
   }
@@ -245,6 +290,7 @@ describe('cart and checkout', () => {
     await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 2 });
 
     const payment = await startPayment(token);
+    expect((await request(app).get('/api/payments/config')).body.enabled).toBe(true);
     expect(payment.status).toBe(201);
     expect(payment.body.payment).toMatchObject({ amount: 200000, currency: 'INR' });
     expect((await Product.findById(product.id)).stock).toBe(5);
@@ -274,6 +320,8 @@ describe('cart and checkout', () => {
       id: 'pay_test_1',
       order_id: payment.body.payment.orderId,
       status: 'authorized',
+      amount: payment.body.payment.amount,
+      currency: payment.body.payment.currency,
     });
 
     const res = await request(app)
@@ -316,13 +364,42 @@ describe('cart and checkout', () => {
     expect((await Product.findById(product.id)).stock).toBe(0);
   });
 
-  test('direct order creation is no longer available without payment verification', async () => {
+  test('does not place an order when the captured amount does not match the checkout', async () => {
     const { token } = await register();
-    expect((await request(app).post('/api/orders').set(auth(token))).status).toBe(404);
+    const product = await makeProduct({ price: 1000 });
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 1 });
+    const payment = await startPayment(token);
+    paymentProvider.fetchPayment.mockResolvedValueOnce({
+      id: 'pay_test_1',
+      order_id: payment.body.payment.orderId,
+      status: 'captured',
+      amount: payment.body.payment.amount + 100,
+      currency: 'INR',
+    });
+
+    const res = await request(app)
+      .post('/api/payments/verify')
+      .set(auth(token))
+      .send({
+        razorpay_order_id: payment.body.payment.orderId,
+        razorpay_payment_id: 'pay_test_1',
+        razorpay_signature: 'test-signature',
+      });
+    expect(res.status).toBe(409);
+    expect(await Order.countDocuments()).toBe(0);
+  });
+
+  test('direct order creation is blocked while payments are enabled', async () => {
+    const { token } = await register();
+    expect((await request(app).post('/api/orders').set(auth(token))).status).toBe(409);
   });
 });
 
 describe('orders', () => {
+  beforeEach(() => {
+    config.paymentsEnabled = true;
+  });
+
   async function placeOrder(token, product, quantity = 1) {
     await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity });
     const payment = await request(app).post('/api/payments/order').set(auth(token));
@@ -330,6 +407,8 @@ describe('orders', () => {
       id: `pay_test_${nextProviderOrder}`,
       order_id: payment.body.payment.orderId,
       status: 'captured',
+      amount: payment.body.payment.amount,
+      currency: payment.body.payment.currency,
     });
     const result = await request(app)
       .post('/api/payments/verify')
@@ -433,6 +512,10 @@ describe('orders', () => {
 });
 
 describe('business metrics', () => {
+  beforeEach(() => {
+    config.paymentsEnabled = true;
+  });
+
   // Counters only ever go up and are shared by every test in this file, so compare before and after.
   async function metric(name, labels = '') {
     const text = await metrics.register.metrics();
@@ -463,6 +546,8 @@ describe('business metrics', () => {
       id: 'pay_metrics',
       order_id: payment.body.payment.orderId,
       status: 'captured',
+      amount: payment.body.payment.amount,
+      currency: payment.body.payment.currency,
     });
     const order = (
       await request(app)
