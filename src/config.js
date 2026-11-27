@@ -13,6 +13,9 @@ const config = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '1h',
   bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '10', 10),
   appVersion: process.env.APP_VERSION || 'dev',
+  paymentsEnabled: process.env.PAYMENTS_ENABLED === 'true',
+  razorpayKeyId: process.env.RAZORPAY_KEY_ID || '',
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || '',
 };
 
 if (config.env === 'production' && config.jwtSecret === DEV_SECRET) {

@@ -7,6 +7,7 @@ const Product = require('../models/Product');
 const { HttpError, asyncHandler } = require('../errors');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { str, requireObjectId } = require('../validate');
+const config = require('../config');
 const { business } = require('../metrics');
 
 const router = express.Router();
@@ -27,12 +28,13 @@ const restoreStock = (items) =>
     )
   );
 
-// Checkout: turn the cart into an order.
-// A standalone MongoDB has no multi-document transactions, so stock is reserved with an
-// atomic conditional update per product, and undone if any later step fails.
 router.post(
   '/',
   asyncHandler(async (req, res) => {
+    if (config.paymentsEnabled) {
+      throw new HttpError(409, 'Checkout requires a verified payment');
+    }
+
     const cart = await Cart.findOne({ user: req.user.id }).populate('items.product');
     if (!cart || cart.items.length === 0) {
       business.checkoutFailures.inc({ reason: 'empty_cart' });
@@ -72,7 +74,6 @@ router.post(
       res.status(201).json({ order });
     } catch (err) {
       await restoreStock(reserved);
-      // 409 here means somebody else took the stock first; anything else is an unexpected fault.
       business.checkoutFailures.inc({ reason: err instanceof HttpError && err.status === 409 ? 'out_of_stock' : 'error' });
       throw err;
     }

@@ -19,6 +19,12 @@ const orderSchema = new mongoose.Schema(
     ],
     total: { type: Number, required: true, min: 0 },
     status: { type: String, enum: ORDER_STATUSES, default: 'placed' },
+    checkoutSession: { type: mongoose.Schema.Types.ObjectId, unique: true, sparse: true },
+    payment: {
+      provider: { type: String, enum: ['razorpay'] },
+      paymentId: { type: String, unique: true, sparse: true },
+      status: { type: String, enum: ['captured'] },
+    },
   },
   { timestamps: true }
 );

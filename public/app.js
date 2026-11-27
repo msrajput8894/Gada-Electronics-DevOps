@@ -13,6 +13,8 @@ const LOW_STOCK = 5; // show "Only N left" at or below this
 const state = {
   token: sessionStorage.getItem('token'),
   user: JSON.parse(sessionStorage.getItem('user') || 'null'),
+  paymentsEnabled: false,
+  paymentConfigLoaded: false,
   page: Math.max(1, parseInt(initial.get('page'), 10) || 1),
   category: initial.get('category') || '',
   sort: SORT_KEYS.includes(initial.get('sort')) ? initial.get('sort') : 'newest',
@@ -358,8 +360,14 @@ async function showCart(note) {
           el('div', { class: 'total' }, el('span', {}, `Total (${cart.itemCount} ${cart.itemCount === 1 ? 'item' : 'items'})`), el('span', {}, money.format(cart.total))),
           el(
             'button',
-            { id: 'checkout-btn', type: 'button', class: 'primary wide', ...(blocked ? { disabled: '' } : {}), onclick: checkout },
-            'Place order'
+            {
+              id: 'checkout-btn',
+              type: 'button',
+              class: 'primary wide',
+              ...(blocked || !state.paymentConfigLoaded ? { disabled: '' } : {}),
+              onclick: checkout,
+            },
+            state.paymentConfigLoaded ? (state.paymentsEnabled ? 'Pay securely' : 'Place order') : 'Checking checkout...'
           ),
           blocked ? el('p', { class: 'error' }, 'Fix the highlighted items before placing your order.') : '',
           el(
@@ -404,20 +412,89 @@ const clearCart = () => cartAction(() => api('/cart', { method: 'DELETE' }), 'Ca
 
 async function checkout() {
   if (busy) return;
+  if (!state.paymentConfigLoaded) {
+    return showCart({ text: 'Checkout settings are still loading. Please try again.', isError: true });
+  }
+  if (state.paymentsEnabled && !window.Razorpay) {
+    return showCart({ text: 'Payment checkout could not be loaded. Check your connection and try again.', isError: true });
+  }
   busy = true;
   const button = $('checkout-btn');
   button.disabled = true;
-  button.textContent = 'Placing order...';
+  button.textContent = state.paymentsEnabled ? 'Starting secure checkout...' : 'Placing order...';
   try {
-    const { order } = await api('/orders', { method: 'POST' });
-    busy = false;
-    await Promise.all([loadProducts(), refreshCartCount()]);
-    showOrderPlaced(order);
+    if (!state.paymentsEnabled) {
+      const { order } = await api('/orders', { method: 'POST' });
+      busy = false;
+      await Promise.all([loadProducts(), refreshCartCount()]);
+      showOrderPlaced(order);
+      return;
+    }
+
+    const { payment } = await api('/payments/order', { method: 'POST' });
+    let finished = false;
+    const checkout = new window.Razorpay({
+      key: payment.keyId,
+      amount: payment.amount,
+      currency: payment.currency,
+      name: 'Gada Electronics',
+      description: 'Purchase from Gada Electronics',
+      order_id: payment.orderId,
+      prefill: { name: state.user.name, email: state.user.email },
+      handler: async (response) => {
+        try {
+          const { order } = await api('/payments/verify', { method: 'POST', body: response });
+          finished = true;
+          busy = false;
+          await Promise.all([loadProducts(), refreshCartCount()]);
+          showOrderPlaced(order);
+        } catch (err) {
+          finished = true;
+          busy = false;
+          await showCart({ text: err.message, isError: true });
+          await loadProducts();
+        }
+      },
+      modal: {
+        ondismiss: async () => {
+          if (finished) return;
+          finished = true;
+          busy = false;
+          await showCart({ text: 'Checkout closed. Your cart is unchanged.', isError: false });
+        },
+      },
+    });
+    checkout.on('payment.failed', (event) => {
+      panelNotify(event.error?.description || 'Payment failed. You can try again.');
+    });
+    checkout.open();
   } catch (err) {
     busy = false;
-    // Stock may have changed since the cart was drawn: redraw it and explain.
     await showCart({ text: err.message, isError: true });
     await loadProducts();
+  }
+}
+
+async function loadPaymentConfig() {
+  const { enabled } = await api('/payments/config');
+  state.paymentsEnabled = enabled;
+  state.paymentConfigLoaded = true;
+
+  try {
+    if (enabled) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        script.async = true;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Payment checkout could not be loaded. Check your connection and refresh.'));
+        document.head.append(script);
+      });
+    }
+  } finally {
+    if (!$('panel').hidden && $('panel-title').textContent === 'Your cart') {
+      await showCart();
+    }
   }
 }
 
@@ -796,6 +873,7 @@ $('theme-btn').addEventListener('click', () => {
   applyTheme(next);
 });
 loadVersion();
+loadPaymentConfig().catch((err) => notify(err.message, true));
 renderNav();
 $('q').value = initial.get('q') || '';
 $('sort').value = state.sort;
