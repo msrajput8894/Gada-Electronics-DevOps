@@ -6,8 +6,7 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const { HttpError, asyncHandler } = require('../errors');
 const { authenticate, requireRole } = require('../middleware/auth');
-const { str, requireObjectId } = require('../validate');
-const config = require('../config');
+const { str, requireObjectId, requireDeliveryAddress } = require('../validate');
 const { business } = require('../metrics');
 
 const router = express.Router();
@@ -31,9 +30,11 @@ const restoreStock = (items) =>
 router.post(
   '/',
   asyncHandler(async (req, res) => {
-    if (config.paymentsEnabled) {
-      throw new HttpError(409, 'Checkout requires a verified payment');
+    const body = req.body || {};
+    if (body.paymentMethod !== 'cod') {
+      throw new HttpError(400, 'Choose cash on delivery to place an order here');
     }
+    const deliveryAddress = requireDeliveryAddress(body.deliveryAddress);
 
     const cart = await Cart.findOne({ user: req.user.id }).populate('items.product');
     if (!cart || cart.items.length === 0) {
@@ -65,7 +66,14 @@ router.post(
         quantity: item.quantity,
       }));
       const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-      const order = await Order.create({ user: req.user.id, items, total });
+      const order = await Order.create({
+        user: req.user.id,
+        items,
+        total,
+        paymentMethod: 'cod',
+        paymentStatus: 'pending',
+        deliveryAddress,
+      });
 
       cart.items = [];
       await cart.save();
@@ -141,9 +149,11 @@ router.patch(
     }
 
     // Conditional update so two admins cannot apply conflicting changes at the same time.
+    const update = { status: next };
+    if (next === 'delivered' && order.paymentMethod === 'cod') update.paymentStatus = 'paid';
     const updated = await Order.findOneAndUpdate(
       { _id: id, status: order.status },
-      { status: next },
+      update,
       { new: true }
     );
     if (!updated) throw new HttpError(409, 'Order was changed by someone else, reload and retry');

@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const DeliveryAddress = require('./DeliveryAddress');
 
 const paymentSessionSchema = new mongoose.Schema(
   {
@@ -17,6 +18,7 @@ const paymentSessionSchema = new mongoose.Schema(
       },
     ],
     total: { type: Number, required: true, min: 0 },
+    deliveryAddress: { type: DeliveryAddress, required: true },
     status: {
       type: String,
       enum: ['pending', 'processing', 'paid', 'fulfillment_failed'],

@@ -18,6 +18,15 @@ const metrics = require('../src/metrics');
 
 const app = createApp();
 const PASSWORD = 'Passw0rd!';
+const DELIVERY_ADDRESS = {
+  fullName: 'Asha Sharma',
+  phone: '9876543210',
+  addressLine1: '14 Main Road',
+  addressLine2: '',
+  city: 'Pune',
+  state: 'Maharashtra',
+  postalCode: '411001',
+};
 
 beforeAll(db.connect);
 afterEach(db.clear);
@@ -218,11 +227,42 @@ describe('payment feature flag', () => {
     expect((await request(app).post('/api/payments/verify').set(auth(token))).status).toBe(503);
     expect(paymentProvider.createOrder).not.toHaveBeenCalled();
 
-    const checkout = await request(app).post('/api/orders').set(auth(token));
+    const checkout = await request(app)
+      .post('/api/orders')
+      .set(auth(token))
+      .send({ paymentMethod: 'cod', deliveryAddress: DELIVERY_ADDRESS });
     expect(checkout.status).toBe(201);
     expect(checkout.body.order.total).toBe(2000);
+    expect(checkout.body.order).toMatchObject({
+      paymentMethod: 'cod',
+      paymentStatus: 'pending',
+      deliveryAddress: { fullName: 'Asha Sharma', postalCode: '411001', country: 'India' },
+    });
     expect((await Product.findById(product.id)).stock).toBe(3);
     expect((await request(app).get('/api/cart').set(auth(token))).body.cart.items).toHaveLength(0);
+  });
+
+  test('requires a valid delivery address before creating a COD order', async () => {
+    const { token } = await register();
+    const product = await makeProduct();
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 1 });
+
+    const missing = await request(app)
+      .post('/api/orders')
+      .set(auth(token))
+      .send({ paymentMethod: 'cod' });
+    expect(missing.status).toBe(400);
+
+    const invalid = await request(app)
+      .post('/api/orders')
+      .set(auth(token))
+      .send({
+        paymentMethod: 'cod',
+        deliveryAddress: { ...DELIVERY_ADDRESS, phone: '123', postalCode: '12' },
+      });
+    expect(invalid.status).toBe(400);
+    expect(await Order.countDocuments()).toBe(0);
+    expect((await Product.findById(product.id)).stock).toBe(5);
   });
 
   test('failed demo checkout restores stock reserved earlier in the cart', async () => {
@@ -233,7 +273,10 @@ describe('payment feature flag', () => {
     await request(app).post('/api/cart/items').set(auth(token)).send({ productId: scarce.id, quantity: 1 });
     await Product.updateOne({ _id: scarce.id }, { stock: 0 });
 
-    const checkout = await request(app).post('/api/orders').set(auth(token));
+    const checkout = await request(app)
+      .post('/api/orders')
+      .set(auth(token))
+      .send({ paymentMethod: 'cod', deliveryAddress: DELIVERY_ADDRESS });
     expect(checkout.status).toBe(409);
     expect((await Product.findById(available.id)).stock).toBe(5);
     expect((await Product.findById(scarce.id)).stock).toBe(0);
@@ -264,7 +307,10 @@ describe('cart and checkout', () => {
   });
 
   async function startPayment(token) {
-    return request(app).post('/api/payments/order').set(auth(token));
+    return request(app)
+      .post('/api/payments/order')
+      .set(auth(token))
+      .send({ deliveryAddress: DELIVERY_ADDRESS });
   }
 
   async function confirmPayment(token, payment, overrides = {}) {
@@ -299,6 +345,11 @@ describe('cart and checkout', () => {
     expect(res.status).toBe(201);
     expect(res.body.order.total).toBe(2000);
     expect(res.body.order.status).toBe('placed');
+    expect(res.body.order).toMatchObject({
+      paymentMethod: 'razorpay',
+      paymentStatus: 'paid',
+      deliveryAddress: { fullName: 'Asha Sharma', postalCode: '411001', country: 'India' },
+    });
     expect(res.body.order.payment).toMatchObject({ provider: 'razorpay', paymentId: 'pay_test_1', status: 'captured' });
 
     expect((await Product.findById(product.id)).stock).toBe(3);
@@ -389,9 +440,22 @@ describe('cart and checkout', () => {
     expect(await Order.countDocuments()).toBe(0);
   });
 
-  test('direct order creation is blocked while payments are enabled', async () => {
+  test('COD is accepted while direct Razorpay orders are rejected', async () => {
     const { token } = await register();
-    expect((await request(app).post('/api/orders').set(auth(token))).status).toBe(409);
+    const product = await makeProduct();
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 1 });
+    const directOnline = await request(app)
+      .post('/api/orders')
+      .set(auth(token))
+      .send({ paymentMethod: 'razorpay', deliveryAddress: DELIVERY_ADDRESS });
+    expect(directOnline.status).toBe(400);
+
+    const cod = await request(app)
+      .post('/api/orders')
+      .set(auth(token))
+      .send({ paymentMethod: 'cod', deliveryAddress: DELIVERY_ADDRESS });
+    expect(cod.status).toBe(201);
+    expect(cod.body.order.paymentMethod).toBe('cod');
   });
 });
 
@@ -402,7 +466,10 @@ describe('orders', () => {
 
   async function placeOrder(token, product, quantity = 1) {
     await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity });
-    const payment = await request(app).post('/api/payments/order').set(auth(token));
+    const payment = await request(app)
+      .post('/api/payments/order')
+      .set(auth(token))
+      .send({ deliveryAddress: DELIVERY_ADDRESS });
     paymentProvider.fetchPayment.mockResolvedValueOnce({
       id: `pay_test_${nextProviderOrder}`,
       order_id: payment.body.payment.orderId,
@@ -420,6 +487,29 @@ describe('orders', () => {
       });
     return result.body.order;
   }
+
+  test('collects COD payment when an admin marks the order delivered', async () => {
+    const { token } = await register();
+    const admin = await adminToken();
+    const product = await makeProduct();
+    await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 1 });
+    const placed = await request(app)
+      .post('/api/orders')
+      .set(auth(token))
+      .send({ paymentMethod: 'cod', deliveryAddress: DELIVERY_ADDRESS });
+    expect(placed.body.order.paymentStatus).toBe('pending');
+
+    await request(app)
+      .patch(`/api/orders/${placed.body.order._id}/status`)
+      .set(auth(admin))
+      .send({ status: 'shipped' });
+    const delivered = await request(app)
+      .patch(`/api/orders/${placed.body.order._id}/status`)
+      .set(auth(admin))
+      .send({ status: 'delivered' });
+    expect(delivered.status).toBe(200);
+    expect(delivered.body.order.paymentStatus).toBe('paid');
+  });
 
   test('customers only see their own orders', async () => {
     const asha = await register('asha@example.com', 'Asha');
@@ -541,7 +631,10 @@ describe('business metrics', () => {
 
     const product = await makeProduct({ price: 500, stock: 5 });
     await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 2 });
-    const payment = await request(app).post('/api/payments/order').set(auth(token));
+    const payment = await request(app)
+      .post('/api/payments/order')
+      .set(auth(token))
+      .send({ deliveryAddress: DELIVERY_ADDRESS });
     paymentProvider.fetchPayment.mockResolvedValueOnce({
       id: 'pay_metrics',
       order_id: payment.body.payment.orderId,
@@ -566,11 +659,21 @@ describe('business metrics', () => {
     expect(await metric('gada_orders_cancelled_total', '{by="customer"}')).toBe(before.cancelled + 1);
 
     // Empty cart, then stock taken by someone else after the item was added to the cart.
-    await request(app).post('/api/payments/order').set(auth(token));
+    await request(app)
+      .post('/api/payments/order')
+      .set(auth(token))
+      .send({ deliveryAddress: DELIVERY_ADDRESS });
     expect(await metric('gada_checkout_failures_total', '{reason="empty_cart"}')).toBe(before.emptyCart + 1);
     await request(app).post('/api/cart/items').set(auth(token)).send({ productId: product.id, quantity: 2 });
     await Product.updateOne({ _id: product.id }, { stock: 0 });
-    expect((await request(app).post('/api/payments/order').set(auth(token))).status).toBe(409);
+    expect(
+      (
+        await request(app)
+          .post('/api/payments/order')
+          .set(auth(token))
+          .send({ deliveryAddress: DELIVERY_ADDRESS })
+      ).status
+    ).toBe(409);
     expect(await metric('gada_checkout_failures_total', '{reason="out_of_stock"}')).toBe(before.outOfStock + 1);
     // A failed checkout is not an order.
     expect(await metric('gada_orders_placed_total')).toBe(before.placed + 1);
