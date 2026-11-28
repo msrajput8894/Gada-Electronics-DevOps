@@ -42,16 +42,38 @@ async function api(path, { method = 'GET', body } = {}) {
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
+  let res;
+  try {
+    res = await fetch(`/api${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new Error('Unable to reach the server. Check your connection and try again.');
+  }
+
+  let data = {};
+  if (res.status !== 204) {
+    try {
+      data = await res.json();
+    } catch {
+      if (res.ok) {
+        throw new Error('The server returned an invalid response. Please refresh and try again.');
+      }
+    }
+  }
   if (!res.ok) {
     if (res.status === 401 && state.token) logout();
     const detail = Array.isArray(data.details) ? `: ${data.details.join(', ')}` : '';
-    throw new Error((data.error || `Request failed (${res.status})`) + detail);
+    const message =
+      data.error ||
+      (res.status >= 500
+        ? `The server could not complete the request (${res.status}). Please try again shortly.`
+        : `Request failed (${res.status}).`);
+    const requestId = data.requestId || res.headers.get('x-request-id');
+    const reference = requestId ? ` (Reference: ${requestId})` : '';
+    throw new Error(`${message}${detail}${reference}`);
   }
   return data;
 }
@@ -284,8 +306,8 @@ async function refreshCartCount() {
   try {
     const { cart } = await api('/cart');
     $('cart-count').textContent = cart.itemCount;
-  } catch {
-    // ignore: the session may have expired and logout() already ran
+  } catch (err) {
+    notify(err.message, true);
   }
 }
 

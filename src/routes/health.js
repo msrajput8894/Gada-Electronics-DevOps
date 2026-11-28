@@ -3,6 +3,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const config = require('../config');
+const { log } = require('../middleware/logger');
 
 const router = express.Router();
 
@@ -18,7 +19,12 @@ router.get('/ready', async (req, res) => {
     await mongoose.connection.db.admin().ping();
     res.json({ status: 'ready' });
   } catch (err) {
-    res.status(503).json({ status: 'not ready', reason: err.message });
+    log('warn', 'readiness check failed', {
+      requestId: req.id,
+      path: req.path,
+      error: err.message,
+    });
+    res.status(503).json({ status: 'not ready', reason: 'database unavailable' });
   }
 });
 

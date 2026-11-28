@@ -11,6 +11,7 @@ jest.mock('../src/paymentProvider', () => ({
 const paymentProvider = require('../src/paymentProvider');
 const config = require('../src/config');
 const { createApp } = require('../src/app');
+const mongoose = require('mongoose');
 const User = require('../src/models/User');
 const Product = require('../src/models/Product');
 const Order = require('../src/models/Order');
@@ -76,6 +77,53 @@ describe('health', () => {
     const res = await request(app).get('/ready');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ready');
+  });
+
+  test('GET /ready does not expose database errors', async () => {
+    const admin = jest.spyOn(mongoose.connection.db, 'admin').mockReturnValue({
+      ping: jest.fn().mockRejectedValueOnce(new Error('private database detail')),
+    });
+    let res;
+    try {
+      res = await request(app).get('/ready');
+    } finally {
+      admin.mockRestore();
+    }
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ status: 'not ready', reason: 'database unavailable' });
+    expect(JSON.stringify(res.body)).not.toContain('private database detail');
+  });
+});
+
+describe('error responses', () => {
+  test('returns a request reference for malformed JSON', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .set('Content-Type', 'application/json')
+      .send('{"name":');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Request body is not valid JSON');
+    expect(res.body.requestId).toBeTruthy();
+    expect(res.headers['x-request-id']).toBe(res.body.requestId);
+  });
+
+  test('rejects request bodies over the configured size limit clearly', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Asha', email: 'asha@example.com', password: PASSWORD, extra: 'x'.repeat(101 * 1024) });
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toBe('Request body is too large (maximum 100 KB)');
+    expect(res.body.requestId).toBeTruthy();
+  });
+
+  test('returns a JSON 404 for unknown non-API paths', async () => {
+    const res = await request(app).get('/unknown-page');
+
+    expect(res.status).toBe(404);
+    expect(res.body).toMatchObject({ error: 'Not found' });
   });
 });
 

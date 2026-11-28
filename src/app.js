@@ -46,6 +46,7 @@ function createApp({ authRateLimits } = {}) {
   app.use('/api', notFound);
 
   app.use(express.static(path.join(__dirname, '..', 'public')));
+  app.use(notFound);
 
   app.use(errorHandler);
   return app;

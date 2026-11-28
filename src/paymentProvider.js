@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const config = require('./config');
 const { HttpError } = require('./errors');
+const { log } = require('./middleware/logger');
 
 function requireCredentials() {
   if (!config.paymentsEnabled) {
@@ -20,6 +21,7 @@ function requireCredentials() {
 
 async function razorpayRequest(path, { method = 'GET', body } = {}) {
   requireCredentials();
+  const operation = method === 'POST' ? 'create_order' : 'fetch_payment';
   let response;
   try {
     response = await fetch(`https://api.razorpay.com/v1${path}`, {
@@ -30,13 +32,52 @@ async function razorpayRequest(path, { method = 'GET', body } = {}) {
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-  } catch {
-    throw new HttpError(502, 'Could not reach the payment provider');
+  } catch (err) {
+    log('warn', 'payment provider request failed', { operation, error: err.message });
+    throw new HttpError(502, 'Could not reach the payment provider. Please try again.');
   }
 
-  const result = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new HttpError(502, 'The payment provider rejected the request');
+    log('warn', 'payment provider rejected request', { operation, status: response.status });
+    throw new HttpError(502, 'The payment provider could not process the request. Please try again.');
+  }
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    log('warn', 'payment provider returned invalid JSON', { operation, status: response.status });
+    throw new HttpError(502, 'The payment provider returned an invalid response. Please try again.');
+  }
+  return result;
+}
+
+async function createOrder(amount, receipt) {
+  const result = await razorpayRequest('/orders', { method: 'POST', body: { amount, currency: 'INR', receipt } });
+  if (
+    !result ||
+    typeof result.id !== 'string' ||
+    !result.id ||
+    result.amount !== amount ||
+    result.currency !== 'INR'
+  ) {
+    log('warn', 'payment provider returned an invalid order', { operation: 'create_order' });
+    throw new HttpError(502, 'The payment provider returned an invalid order. Please try again.');
+  }
+  return result;
+}
+
+async function fetchPayment(paymentId) {
+  const result = await razorpayRequest(`/payments/${encodeURIComponent(paymentId)}`);
+  if (
+    !result ||
+    typeof result.id !== 'string' ||
+    typeof result.order_id !== 'string' ||
+    typeof result.status !== 'string' ||
+    !Number.isSafeInteger(result.amount) ||
+    typeof result.currency !== 'string'
+  ) {
+    log('warn', 'payment provider returned an invalid payment', { operation: 'fetch_payment' });
+    throw new HttpError(502, 'The payment provider returned invalid payment details. Please try again.');
   }
   return result;
 }
@@ -57,8 +98,7 @@ function verifyCheckoutSignature(orderId, paymentId, signature) {
 }
 
 module.exports = {
-  createOrder: (amount, receipt) =>
-    razorpayRequest('/orders', { method: 'POST', body: { amount, currency: 'INR', receipt } }),
-  fetchPayment: (paymentId) => razorpayRequest(`/payments/${encodeURIComponent(paymentId)}`),
+  createOrder,
+  fetchPayment,
   verifyCheckoutSignature,
 };
