@@ -16,7 +16,8 @@ const Product = require('../src/models/Product');
 const Order = require('../src/models/Order');
 const metrics = require('../src/metrics');
 
-const app = createApp();
+const app = createApp({ authRateLimits: { loginLimit: 100, registrationLimit: 100 } });
+const rateLimitedAuthApp = createApp({ authRateLimits: { loginLimit: 2, registrationLimit: 2 } });
 const PASSWORD = 'Passw0rd!';
 const DELIVERY_ADDRESS = {
   fullName: 'Asha Sharma',
@@ -113,6 +114,33 @@ describe('auth', () => {
     expect(ok.status).toBe(200);
     const bad = await request(app).post('/api/auth/login').send({ email: 'asha@example.com', password: 'wrong-password' });
     expect(bad.status).toBe(401);
+  });
+
+  test('limits registration attempts and returns a structured 429 response', async () => {
+    const body = (email) => ({ name: 'Asha', email, password: PASSWORD });
+    expect((await request(rateLimitedAuthApp).post('/api/auth/register').send(body('one@example.com'))).status).toBe(201);
+    expect((await request(rateLimitedAuthApp).post('/api/auth/register').send(body('two@example.com'))).status).toBe(201);
+
+    const limited = await request(rateLimitedAuthApp)
+      .post('/api/auth/register')
+      .send(body('three@example.com'));
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({ error: 'Too many registration attempts. Please try again later.' });
+    expect(await User.countDocuments()).toBe(2);
+  });
+
+  test('limits failed logins without counting successful logins', async () => {
+    await register();
+    const login = (password) =>
+      request(rateLimitedAuthApp).post('/api/auth/login').send({ email: 'asha@example.com', password });
+
+    expect((await login('wrong-password')).status).toBe(401);
+    expect((await login(PASSWORD)).status).toBe(200);
+    expect((await login('wrong-password')).status).toBe(401);
+
+    const limited = await login('wrong-password');
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({ error: 'Too many login attempts. Please try again later.' });
   });
 
   test('GET /api/auth/me requires a valid token', async () => {

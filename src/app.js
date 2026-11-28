@@ -8,7 +8,7 @@ const { requestLogger } = require('./middleware/logger');
 const { notFound, errorHandler } = require('./middleware/error');
 const { metricsMiddleware } = require("./metrics");
 
-function createApp() {
+function createApp({ authRateLimits } = {}) {
   const app = express();
 
   // The app will sit behind nginx / a load balancer, so trust the first proxy hop.
@@ -38,7 +38,7 @@ function createApp() {
   app.use(express.json({ limit: '100kb' }));
 
   app.use(require('./routes/health'));
-  app.use('/api/auth', require('./routes/auth'));
+  app.use('/api/auth', require('./routes/auth')(authRateLimits));
   app.use('/api/products', require('./routes/products'));
   app.use('/api/cart', require('./routes/cart'));
   app.use('/api/payments', require('./routes/payments'));

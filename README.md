@@ -66,8 +66,8 @@ Everything comes from environment variables, so the same build runs unchanged in
 | --- | --- | --- | --- |
 | GET | `/health` | public | liveness: the process is running |
 | GET | `/ready` | public | readiness: the database is reachable (503 otherwise) |
-| POST | `/api/auth/register` | public | create a customer account |
-| POST | `/api/auth/login` | public | get a token |
+| POST | `/api/auth/register` | public | create a customer account (rate limited by IP) |
+| POST | `/api/auth/login` | public | get a token (failed attempts rate limited by IP) |
 | GET | `/api/auth/me` | user | current user |
 | GET | `/api/products` | public | list; query `q`, `category`, `page`, `limit` |
 | GET | `/api/products/categories` | public | category names |
@@ -95,6 +95,7 @@ These are the points an interviewer or a production incident will eventually ask
 - **Liveness vs readiness** (`src/routes/health.js`): `/health` says the process is alive, `/ready` says it can serve traffic. Load balancers and Kubernetes use them for different decisions.
 - **Graceful shutdown** (`src/server.js`): on SIGTERM the app stops accepting connections, finishes in-flight requests and closes the database. Docker, systemd and Kubernetes all stop containers this way.
 - **JSON logs on stdout** (`src/middleware/logger.js`): one object per line, which is what log shippers expect. Apps should not write their own log files.
+- **Authentication rate limits** (`src/routes/auth.js`): registration and failed login attempts are limited to 5 per IP per 15 minutes; successful logins do not count toward the login limit. Rate-limited requests receive HTTP 429 with a JSON error.
 - **Checkout without transactions** (`src/routes/orders.js`, `src/routes/payments.js`): a standalone MongoDB cannot run multi-document transactions, so stock is reserved with an atomic conditional update and rolled back on failure. Compare with replica sets and transactions when you reach the database phase.
 - **Payment confirmation** (`src/routes/payments.js`): the browser never decides whether an order is paid. The server verifies Razorpay's signature and fetches the payment status before creating an order. Start with Razorpay Test Mode keys; configure payment credentials through environment/secret management, never in source control. A payment captured after stock is taken by another customer requires manual refund handling in this learning version.
 - **Payment feature flag**: `PAYMENTS_ENABLED` defaults to `false`, so checkout offers cash on delivery only. To offer online payments too, replace the placeholder values with Razorpay Test Mode credentials, set `PAYMENTS_ENABLED=true`, and enable automatic capture in Razorpay. The placeholder credentials are not valid and cannot process payments.
